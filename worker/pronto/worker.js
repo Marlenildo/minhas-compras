@@ -299,8 +299,100 @@ async function diagnosticarML(env, fetcher = fetch) {
   return passos;
 }
 
+// worker/src/google.js
+var SERPAPI = "https://serpapi.com/search.json";
+function lerFrete(texto) {
+  if (!texto) return { freteGratis: false, frete: null };
+  const t = String(texto).toLowerCase();
+  if (/(frete|entrega)\s*(gr[aá]tis|gratuit)|free (delivery|shipping)/.test(t)) return { freteGratis: true, frete: 0 };
+  const m = t.match(/r\$\s*([\d.]+,\d{2}|\d+(?:[.,]\d+)?)/);
+  if (m && /(frete|entrega|envio|delivery|shipping)/.test(t)) return { freteGratis: false, frete: lerNumero(m[1], null) };
+  return { freteGratis: false, frete: null };
+}
+function textoDeFrete(r) {
+  const partes = [r.delivery, r.shipping, ...Array.isArray(r.extensions) ? r.extensions : []];
+  return partes.filter(Boolean).join(" \xB7 ");
+}
+function normalizarResultadoGoogle(r, i = 0) {
+  const tamanho = lerTitulo(r.title);
+  const frete = lerFrete(textoDeFrete(r));
+  const preco = typeof r.extracted_price === "number" ? r.extracted_price : lerNumero(r.price, null);
+  return {
+    id: `gs:${r.product_id || r.position || i}:${String(r.source || "").slice(0, 30)}`,
+    fonte: "google",
+    loja: r.source || "Loja n\xE3o informada",
+    vendedor: null,
+    lojaOficial: false,
+    titulo: r.title,
+    preco,
+    precoOriginal: typeof r.extracted_old_price === "number" ? r.extracted_old_price : null,
+    foto: r.thumbnail || (Array.isArray(r.thumbnails) ? r.thumbnails[0] : null) || null,
+    link: r.link || r.product_link || null,
+    condicao: r.second_hand_condition ? "used" : "new",
+    freteGratis: frete.freteGratis,
+    frete: frete.frete,
+    full: false,
+    avaliacao: typeof r.rating === "number" ? r.rating : null,
+    avaliacoes: typeof r.reviews === "number" ? r.reviews : null,
+    embalagens: tamanho?.embalagens ?? null,
+    conteudo: tamanho?.conteudo ?? null,
+    unidade: tamanho?.unidade ?? null,
+    fonteConteudo: tamanho ? "titulo" : null
+  };
+}
+async function buscarGoogle(q, { env, fetcher = fetch } = {}) {
+  if (!env.SERPAPI_KEY) throw new ErroDeFonte("O servidor ainda n\xE3o tem a chave da SerpApi (SERPAPI_KEY).", 503);
+  const url = `${SERPAPI}?${new URLSearchParams({
+    engine: "google_shopping",
+    q,
+    gl: "br",
+    hl: "pt-br",
+    google_domain: "google.com.br",
+    location: "Brazil",
+    api_key: env.SERPAPI_KEY
+  })}`;
+  const r = await fetcher(url, { headers: { accept: "application/json" } });
+  const j = await r.json().catch(() => null);
+  if (!r.ok || j?.error) {
+    const motivo = j?.error || `HTTP ${r.status}`;
+    if (/run out of searches|plan|limit/i.test(motivo)) {
+      throw new ErroDeFonte("As buscas gratuitas do m\xEAs acabaram. Elas voltam no pr\xF3ximo ciclo da SerpApi.", 429);
+    }
+    if (/hasn't returned any results/i.test(motivo)) return [];
+    throw new ErroDeFonte(`A busca no Google Shopping falhou (${motivo}).`, 502);
+  }
+  const resultados = [...j.shopping_results || [], ...j.inline_shopping_results || []];
+  const vistos = /* @__PURE__ */ new Set();
+  return resultados.map(normalizarResultadoGoogle).filter((i) => {
+    if (i.condicao === "used" || !(i.preco > 0)) return false;
+    const chave = `${i.loja}|${i.titulo}|${i.preco}`;
+    if (vistos.has(chave)) return false;
+    vistos.add(chave);
+    return true;
+  });
+}
+async function diagnosticarGoogle(env, fetcher = fetch) {
+  if (!env.SERPAPI_KEY) return [{ etapa: "Google Shopping (SerpApi)", ok: false, mensagem: "Falta o segredo SERPAPI_KEY." }];
+  const r = await fetcher(`https://serpapi.com/account.json?api_key=${encodeURIComponent(env.SERPAPI_KEY)}`, {
+    headers: { accept: "application/json" }
+  }).catch(() => null);
+  const j = r ? await r.json().catch(() => null) : null;
+  if (!r || !r.ok || j?.error) {
+    return [{ etapa: "Google Shopping (SerpApi)", ok: false, status: r?.status || 0, mensagem: j?.error || "N\xE3o consegui falar com a SerpApi." }];
+  }
+  return [
+    {
+      etapa: "Google Shopping (SerpApi)",
+      ok: true,
+      status: 200,
+      plano: j.plan_name || null,
+      buscasRestantes: j.total_searches_left ?? j.plan_searches_left ?? null
+    }
+  ];
+}
+
 // worker/src/index.js
-var CACHE_SEGUNDOS = 600;
+var fonteAtiva = (env) => env.SERPAPI_KEY ? "google" : env.ML_CLIENT_ID && env.ML_CLIENT_SECRET ? "mercadolivre" : null;
 function cors(env, req) {
   const permitidas = String(env.ORIGENS_PERMITIDAS || "*").split(",").map((s) => s.trim());
   const origem = req.headers.get("origin") || "";
@@ -344,29 +436,38 @@ async function tratar(req, env, ctx = {}, fetcher = fetch) {
     }
   }
   if (url.pathname === "/api/diagnostico") {
-    return json({ passos: await diagnosticarML(env, fetcher) }, 200, cabecalhos2);
+    const passos = [...await diagnosticarGoogle(env, fetcher)];
+    if (env.ML_CLIENT_ID) passos.push(...await diagnosticarML(env, fetcher));
+    return json({ fontePrincipal: fonteAtiva(env), passos }, 200, cabecalhos2);
   }
   if (url.pathname === "/api/saude") {
-    return json({ ok: true, mercadolivre: Boolean(env.ML_CLIENT_ID && env.ML_CLIENT_SECRET) }, 200, cabecalhos2);
+    return json(
+      { ok: true, fonte: fonteAtiva(env), google: Boolean(env.SERPAPI_KEY), mercadolivre: Boolean(env.ML_CLIENT_ID && env.ML_CLIENT_SECRET) },
+      200,
+      cabecalhos2
+    );
   }
   if (url.pathname === "/api/buscar") {
-    const q = (url.searchParams.get("q") || "").trim().slice(0, 120);
+    const q = (url.searchParams.get("q") || "").trim().replace(/\s+/g, " ").slice(0, 120);
     if (q.length < 2) return json({ erro: "Digite pelo menos 2 letras para buscar." }, 400, cabecalhos2);
     const cep = (url.searchParams.get("cep") || "").replace(/\D/g, "").slice(0, 8);
-    const chave = new Request(`https://cache.minhas-compras/buscar?q=${encodeURIComponent(q.toLowerCase())}&cep=${cep}`);
-    const cache = typeof caches !== "undefined" ? caches.default : null;
-    const salvo = cache ? await cache.match(chave) : null;
-    if (salvo) {
-      const r = new Response(salvo.body, salvo);
-      for (const [k, v] of Object.entries(cabecalhos2)) r.headers.set(k, v);
-      return r;
+    const fonte = fonteAtiva(env);
+    if (!fonte) return json({ erro: "O servidor ainda n\xE3o tem nenhuma fonte de pre\xE7os configurada." }, 503, cabecalhos2);
+    const chaveCache = `busca:${fonte}:${q.toLowerCase()}${fonte === "mercadolivre" ? `:${cep}` : ""}`;
+    const horas = Math.max(0.1, Number(env.CACHE_HORAS) || 6);
+    if (env.TOKENS) {
+      const salvo = await env.TOKENS.get(chaveCache, "json").catch(() => null);
+      if (salvo) return json({ ...salvo, doCache: true }, 200, { ...cabecalhos2, "cache-control": "public, max-age=300" });
     }
     try {
-      const itens = await buscarML(q, { env, cep, fetcher });
-      const corpo = { q, cep: cep || null, verificadoEm: (/* @__PURE__ */ new Date()).toISOString(), fontes: ["mercadolivre"], itens };
-      const resposta = json(corpo, 200, { ...cabecalhos2, "cache-control": `public, max-age=${CACHE_SEGUNDOS}` });
-      if (cache && ctx.waitUntil) ctx.waitUntil(cache.put(chave, resposta.clone()));
-      return resposta;
+      const itens = fonte === "google" ? await buscarGoogle(q, { env, fetcher }) : await buscarML(q, { env, cep, fetcher });
+      const corpo = { q, cep: cep || null, verificadoEm: (/* @__PURE__ */ new Date()).toISOString(), fontes: [fonte], itens };
+      if (env.TOKENS) {
+        const gravar = env.TOKENS.put(chaveCache, JSON.stringify(corpo), { expirationTtl: Math.max(60, Math.round(horas * 3600)) });
+        if (ctx.waitUntil) ctx.waitUntil(gravar);
+        else await gravar;
+      }
+      return json(corpo, 200, { ...cabecalhos2, "cache-control": "public, max-age=300" });
     } catch (e) {
       const status = e instanceof ErroDeFonte ? e.status : 500;
       return json({ erro: e instanceof ErroDeFonte ? e.message : "Erro inesperado no servidor." }, status, cabecalhos2);

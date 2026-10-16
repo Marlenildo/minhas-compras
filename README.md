@@ -7,8 +7,8 @@ Busque um produto e veja onde cada **litro, quilo ou unidade** sai mais barato, 
 ## Como funciona
 
 1. Você busca um produto ("sabonete líquido refil") e, se quiser, informa o CEP.
-2. O servidor de busca consulta a API oficial do Mercado Livre e devolve os anúncios com foto, preço, frete e link.
-3. O app lê o tamanho de cada anúncio (pelo título ou pelos atributos do anúncio), calcula o preço por litro e testa levar de 1 até o máximo de unidades que você aceita.
+2. O servidor de busca consulta o Google Shopping e devolve as ofertas de várias lojas, com foto, preço, frete e link.
+3. O app lê o tamanho de cada oferta pelo título, calcula o preço por litro e testa levar de 1 até o máximo de unidades que você aceita.
 4. A melhor compra aparece em destaque, seguida de todas as ofertas da mais barata para a mais cara.
 
 Também dá para:
@@ -48,25 +48,26 @@ npm run build   # gera dist/minhas-compras.html, que abre direto no navegador
 
 Não há dependências para instalar no app. Basta ter o Node.js 18 ou mais novo.
 
-## Ligar a busca real (Mercado Livre)
+## Fontes de preço
 
-A página não pode chamar a API da loja direto: a chave de acesso precisa ficar escondida num servidor. Por isso existe a pasta `worker/`, que roda de graça no Cloudflare Workers.
+O servidor (`worker/`) roda no Cloudflare Workers e guarda as chaves de acesso. A página nunca chama as lojas direto.
 
-1. **Crie um aplicativo no Mercado Livre**: em [developers.mercadolivre.com.br](https://developers.mercadolivre.com.br), entre com sua conta e crie um aplicativo. Anote o *Client ID* e o *Client Secret*. Nunca coloque o Secret no código nem envie por chat.
-2. **Crie uma conta no Cloudflare** (gratuita) em [cloudflare.com](https://cloudflare.com).
-3. No computador, dentro da pasta `worker/`:
-   ```bash
-   npx wrangler login
-   npx wrangler secret put ML_CLIENT_ID       # cole o Client ID quando pedir
-   npx wrangler secret put ML_CLIENT_SECRET   # cole o Client Secret quando pedir
-   npx wrangler deploy
-   ```
-   O último comando mostra o endereço do servidor, algo como `https://minhas-compras-api.SEU-USUARIO.workers.dev`.
-4. Confira abrindo `ENDEREÇO/api/saude` no navegador. Deve aparecer `"mercadolivre": true`.
-5. Coloque o endereço em `src/config.js` (`API_URL`).
-6. **Publique o app no GitHub Pages**: no repositório, *Settings → Pages → Deploy from a branch → main / (root)*. Depois troque `ORIGENS_PERMITIDAS` em `worker/wrangler.toml` pelo endereço do app e rode `npx wrangler deploy` de novo.
+- **Google Shopping, pela [SerpApi](https://serpapi.com)** (fonte principal): uma busca traz ofertas de várias lojas, com foto, preço e frete quando o Google informa. Plano gratuito de 250 buscas por mês. Cada busca fica guardada por 6 horas (`CACHE_HORAS`), então buscas repetidas não gastam a cota.
+- **Mercado Livre (API oficial)**: o código está pronto, inclusive a conexão da conta do dono (`/api/conectar`), mas o Mercado Livre bloqueia a busca de anúncios e a do catálogo para apps como este ("At least one policy returned UNAUTHORIZED"). Fica como reserva.
 
-O servidor guarda cada busca por 10 minutos, para não consultar a loja à toa.
+### Configuração no Cloudflare (pelo painel)
+
+1. Crie um Worker chamado `minhas-compras-api` e cole o conteúdo de `worker/pronto/worker.js` (gerado com `npm run build:worker`).
+2. Em *Settings → Variables and secrets*:
+   - `SERPAPI_KEY` (Secret): chave da SerpApi;
+   - `ORIGENS_PERMITIDAS` (Text): `*`, ou o endereço do app publicado;
+   - opcionais: `CACHE_HORAS`, `ML_CLIENT_ID`, `ML_CLIENT_SECRET`, `ADMIN_CHAVE`.
+3. Em *Bindings*, ligue um namespace KV com o nome `TOKENS` (cache das buscas e tokens).
+4. Confira em `/api/diagnostico`: mostra a fonte ativa e as buscas restantes, sem mostrar as chaves.
+
+### Publicar o app
+
+No GitHub: *Settings → Pages → Deploy from a branch → main / (root)*. O app fica em `https://marlenildo.github.io/minhas-compras/` e já aponta para o servidor (`src/config.js`).
 
 ## Contas
 
@@ -82,7 +83,7 @@ Plano técnico: login com Google ou link por e-mail (sem senha) usando Supabase,
 
 ## Próximos passos
 
-1. Ligar o servidor ao Mercado Livre e conferir os resultados reais.
+1. Conferir os resultados reais do Google Shopping e ajustar a leitura de tamanhos.
 2. Perfil com assinaturas (Prime, Meli+) para aplicar frete e benefícios sozinho.
 3. Mais lojas por API oficial ou redes de afiliados (Amazon Creators API, Awin, Lomadee). Sem raspar sites.
 4. Contas opcionais, lista do mês e alertas de preço.

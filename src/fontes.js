@@ -28,5 +28,5 @@ export async function buscarProdutos(q, { cep = '' } = {}) {
   }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.erro || `A busca falhou (HTTP ${r.status}).`);
-  return { itens: j.itens || [], verificadoEm: j.verificadoEm, demo: false, aviso: '' };
+  return { itens: j.itens || [], verificadoEm: j.verificadoEm, fontes: j.fontes || [], demo: false, aviso: '' };
 }

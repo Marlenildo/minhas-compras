@@ -70,7 +70,7 @@ function fetchFalso(respostas) {
   return f;
 }
 
-const env = { ML_CLIENT_ID: 'id', ML_CLIENT_SECRET: 'segredo', ORIGENS_PERMITIDAS: '*' };
+const env = { ML_CLIENT_ID: 'id', ML_CLIENT_SECRET: 'SEGREDO-ML-555', ORIGENS_PERMITIDAS: '*' };
 
 test('servidor busca, calcula frete pelo CEP e responde com CORS', async () => {
   const f = fetchFalso([
@@ -91,7 +91,7 @@ test('servidor busca, calcula frete pelo CEP e responde com CORS', async () => {
 test('servidor sem chaves explica o que falta', async () => {
   const r = await tratar(new Request('https://api.exemplo/api/buscar?q=sabonete'), {}, {}, fetchFalso([]));
   assert.equal(r.status, 503);
-  assert.match((await r.json()).erro, /chaves do Mercado Livre/);
+  assert.match((await r.json()).erro, /nenhuma fonte de preços/);
 });
 
 test('busca curta demais é recusada', async () => {
@@ -155,10 +155,12 @@ test('diagnóstico mostra o resultado de cada rota sem expor as chaves', async (
   ]);
   const r = await tratar(new Request('https://api.exemplo/api/diagnostico'), env, {}, f);
   const texto = await r.text();
-  assert.ok(!texto.includes('segredo') && !texto.includes('TOKEN-XYZ-987'));
+  assert.ok(!texto.includes('SEGREDO-ML-555') && !texto.includes('TOKEN-XYZ-987'));
   const { passos } = JSON.parse(texto);
-  assert.deepEqual(passos.map((p) => p.ok), [true, false, true, true, true, true]);
-  assert.equal(passos[1].mensagem, 'forbidden');
+  assert.equal(passos[0].etapa, 'Google Shopping (SerpApi)');
+  const ml = passos.slice(1);
+  assert.deepEqual(ml.map((p) => p.ok), [true, false, true, true, true, true]);
+  assert.equal(ml[1].mensagem, 'forbidden');
 });
 
 class KVFalso {

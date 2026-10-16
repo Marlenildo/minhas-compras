@@ -45,7 +45,7 @@ function salvar() {
   }
 }
 
-const busca = { q: '', itens: [], verificadoEm: null, demo: false, aviso: '', carregando: false, erro: '' };
+const busca = { q: '', itens: [], verificadoEm: null, fontes: [], demo: false, aviso: '', carregando: false, erro: '' };
 let editando = null; // id do item com o tamanho em edição
 
 // ---------------------------------------------------------------------------
@@ -134,7 +134,12 @@ function calcular() {
   const melhor = res.ranking[0] || null;
   const lista = [...res.ranking];
   if (prefs.ordem === 'total') lista.sort((a, b) => a.escolhida.total - b.escolhida.total);
-  return { grupo, melhor, lista, semTamanho, ocultos: comTamanho.length - filtrados.length, outraUnidade: res.ignoradas.length };
+  return {
+    grupo, melhor, lista, semTamanho,
+    ocultos: comTamanho.length - filtrados.length,
+    outraUnidade: res.ignoradas.length,
+    temOficial: itens.some((i) => i.lojaOficial),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -263,7 +268,9 @@ function desenhar() {
     return;
   }
 
-  const { grupo, melhor, lista, semTamanho, ocultos, outraUnidade } = calcular();
+  const { grupo, melhor, lista, semTamanho, ocultos, outraUnidade, temOficial } = calcular();
+  const NOMES_FONTE = { google: 'Google Shopping', mercadolivre: 'Mercado Livre' };
+  const via = (busca.fontes || []).map((f) => NOMES_FONTE[f] || f).join(' e ');
   const hora = busca.verificadoEm ? new Date(busca.verificadoEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
   const total = lista.length + semTamanho.length;
   const extras = [];
@@ -272,7 +279,7 @@ function desenhar() {
 
   alvo.innerHTML = `
     ${busca.aviso ? `<p class="faixa-demo">${esc(busca.aviso)}</p>` : ''}
-    <p class="status">${total} oferta${total === 1 ? '' : 's'} para “${esc(busca.q)}”${hora ? ` · conferido às ${hora}` : ''}${extras.length ? ` · ${extras.join(', ')}` : ''}</p>
+    <p class="status">${total} oferta${total === 1 ? '' : 's'} para “${esc(busca.q)}”${via ? ` · via ${esc(via)}` : ''}${hora ? ` · conferido às ${hora}` : ''}${extras.length ? ` · ${extras.join(', ')}` : ''}</p>
     ${melhor ? htmlMelhor(melhor, grupo) : '<div class="vazio-bloco">Nenhuma oferta com tamanho conhecido passou pelos filtros.</div>'}
     <div class="barra-ferramentas">
       <div class="segmentado" role="group" aria-label="Ordenar">
@@ -281,7 +288,7 @@ function desenhar() {
       </div>
       <div class="filtros">
         <button type="button" class="filtro" data-filtro="freteGratis" aria-pressed="${prefs.filtros.freteGratis}">Frete grátis</button>
-        <button type="button" class="filtro" data-filtro="oficial" aria-pressed="${prefs.filtros.oficial}">Loja oficial</button>
+        ${temOficial || prefs.filtros.oficial ? `<button type="button" class="filtro" data-filtro="oficial" aria-pressed="${prefs.filtros.oficial}">Loja oficial</button>` : ''}
       </div>
     </div>
     ${melhor ? `<div class="grade-cartoes">${lista.map((r, k) => htmlCartao(r, grupo, melhor, k + 1)).join('')}</div>` : ''}
