@@ -6,7 +6,8 @@
   "private": true,
   "scripts": {
     "test": "node --test test/*.test.js",
-    "build": "node scripts/build.mjs"
+    "build": "node scripts/build.mjs",
+    "build:worker": "npx --yes esbuild@0.24.0 worker/src/index.js --bundle --format=esm --target=es2022 --legal-comments=none --outfile=worker/pronto/worker.js"
   },
   "license": "MIT",
   "author": "Marlenildo"
