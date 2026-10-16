@@ -1,61 +1,91 @@
 # Minhas Compras
 
-App que encontra a compra de **menor custo real** de um produto, por litro, quilo ou unidade.
-
-Você coloca as ofertas que achou (loja, preço, embalagem, frete, descontos) e o app calcula, para cada uma, quanto vale a pena levar e quanto você paga de verdade. No fim, mostra a melhor compra e o ranking de todas.
+Busque um produto e veja onde cada **litro, quilo ou unidade** sai mais barato, com fotos, frete e descontos já somados.
 
 > Nome provisório. O nome definitivo do app ainda será escolhido.
 
-## O que o app considera
+## Como funciona
 
-- **Embalagem e tamanho**: sachê de 900 ml, kit com 3 de 250 ml, frasco de 650 ml. Tudo vira preço por litro (ou por kg, unidade, metro).
-- **Leitura do título**: cole "Kit 3 Sabonete Líquido 250 ml" e o app preenche 3 embalagens de 250 ml.
-- **Frete**, inclusive **frete grátis a partir de um valor** (como o do Meli+ no Mercado Livre).
-- **Desconto por quantidade** em faixas (ex.: 5% a partir de 5 unidades, 10% a partir de 10).
-- **Desconto no Pix**.
-- **Levar mais unidades**: o app testa de 1 até o máximo que você aceita levar e sugere a quantidade que deixa o litro mais barato. Se levar mais economiza menos de 1%, ele fica com a quantidade menor.
-- **Quantidade mínima**: se você precisa de pelo menos 2 L, ele só considera compras que cheguem lá.
+1. Você busca um produto ("sabonete líquido refil") e, se quiser, informa o CEP.
+2. O servidor de busca consulta a API oficial do Mercado Livre e devolve os anúncios com foto, preço, frete e link.
+3. O app lê o tamanho de cada anúncio (pelo título ou pelos atributos do anúncio), calcula o preço por litro e testa levar de 1 até o máximo de unidades que você aceita.
+4. A melhor compra aparece em destaque, seguida de todas as ofertas da mais barata para a mais cara.
+
+Também dá para:
+
+- **corrigir o tamanho** de um anúncio, ou informar o tamanho quando o anúncio não traz;
+- **adicionar uma oferta de outra loja** à mão (supermercado do bairro, outro site);
+- filtrar por **frete grátis** e **loja oficial**, e ordenar por preço total.
+
+Sem o servidor ligado, o app roda em **modo demonstração**, com produtos e preços fictícios.
 
 ### Regras do cálculo
 
 1. O desconto por quantidade vale sobre o valor dos produtos.
-2. O frete grátis é conferido no valor dos produtos já com o desconto por quantidade.
-3. O desconto no Pix vale sobre os produtos, não sobre o frete.
-4. O frete informado é o do pedido inteiro, não por unidade.
-
-O preço final deve sempre ser conferido na loja antes de pagar.
-
-## Como usar
-
-Abra `index.html` num navegador servido por HTTP (por exemplo, pelo GitHub Pages) ou gere a versão de arquivo único:
-
-```bash
-npm run build   # gera dist/minhas-compras.html, que abre direto no navegador
-npm test        # roda os testes do motor de cálculo
-```
-
-Não há dependências para instalar. Basta ter o Node.js 18 ou mais novo.
-
-Os dados ficam só no seu navegador (localStorage).
+2. O frete grátis por valor mínimo é conferido depois do desconto por quantidade.
+3. O desconto no Pix não vale sobre o frete.
+4. O frete é do pedido inteiro, não por unidade.
+5. Levar mais unidades só é sugerido se economizar pelo menos 1%.
 
 ## Estrutura
 
 ```
-src/core.js         motor de cálculo (funções puras, sem tela)
-src/app.js          tela: formulário de ofertas e resultado
-index.html          página e estilos
-scripts/build.mjs   junta tudo num arquivo só
-test/core.test.js   testes do motor
+index.html              página e estilos
+src/core.js             motor de cálculo (funções puras, testadas)
+src/app.js              tela: busca, resultado, filtros
+src/fontes.js           de onde vêm os produtos (servidor ou demonstração)
+src/demo.js             dados e ilustrações da demonstração
+src/config.js           endereço do servidor de busca
+worker/                 servidor de busca (Cloudflare Workers)
+scripts/build.mjs       junta tudo num arquivo só (dist/)
+test/                   testes do motor e do servidor
 ```
 
-O motor fica separado da tela para ser reaproveitado depois num app de celular, num servidor ou numa extensão de navegador.
+```bash
+npm test        # roda os testes
+npm run build   # gera dist/minhas-compras.html, que abre direto no navegador
+```
+
+Não há dependências para instalar no app. Basta ter o Node.js 18 ou mais novo.
+
+## Ligar a busca real (Mercado Livre)
+
+A página não pode chamar a API da loja direto: a chave de acesso precisa ficar escondida num servidor. Por isso existe a pasta `worker/`, que roda de graça no Cloudflare Workers.
+
+1. **Crie um aplicativo no Mercado Livre**: em [developers.mercadolivre.com.br](https://developers.mercadolivre.com.br), entre com sua conta e crie um aplicativo. Anote o *Client ID* e o *Client Secret*. Nunca coloque o Secret no código nem envie por chat.
+2. **Crie uma conta no Cloudflare** (gratuita) em [cloudflare.com](https://cloudflare.com).
+3. No computador, dentro da pasta `worker/`:
+   ```bash
+   npx wrangler login
+   npx wrangler secret put ML_CLIENT_ID       # cole o Client ID quando pedir
+   npx wrangler secret put ML_CLIENT_SECRET   # cole o Client Secret quando pedir
+   npx wrangler deploy
+   ```
+   O último comando mostra o endereço do servidor, algo como `https://minhas-compras-api.SEU-USUARIO.workers.dev`.
+4. Confira abrindo `ENDEREÇO/api/saude` no navegador. Deve aparecer `"mercadolivre": true`.
+5. Coloque o endereço em `src/config.js` (`API_URL`).
+6. **Publique o app no GitHub Pages**: no repositório, *Settings → Pages → Deploy from a branch → main / (root)*. Depois troque `ORIGENS_PERMITIDAS` em `worker/wrangler.toml` pelo endereço do app e rode `npx wrangler deploy` de novo.
+
+O servidor guarda cada busca por 10 minutos, para não consultar a loja à toa.
+
+## Contas
+
+Hoje o app funciona **sem conta**: CEP, ajustes e ofertas adicionadas ficam salvos só no aparelho (localStorage).
+
+A conta será opcional. Ela serve para:
+
+- ver as listas em qualquer aparelho;
+- montar a lista do mês dos produtos que você sempre compra;
+- receber aviso quando o preço por litro cair.
+
+Plano técnico: login com Google ou link por e-mail (sem senha) usando Supabase, que guarda as listas num banco de dados com acesso só do próprio usuário. Ao criar a conta, o que já está salvo no aparelho é copiado para ela.
 
 ## Próximos passos
 
-1. **Versão 1 (atual)**: você informa as ofertas e o app calcula a melhor compra.
-2. **Perfil**: CEP e assinaturas (Prime, Meli+) salvos, para o app aplicar frete e benefícios sozinho.
-3. **Busca automática** nas lojas que oferecem API oficial ou catálogo de afiliados (Amazon, Mercado Livre, redes de afiliados).
-4. **Lista do mês e alertas**: produtos que você compra sempre e aviso quando o preço por litro cair.
+1. Ligar o servidor ao Mercado Livre e conferir os resultados reais.
+2. Perfil com assinaturas (Prime, Meli+) para aplicar frete e benefícios sozinho.
+3. Mais lojas por API oficial ou redes de afiliados (Amazon Creators API, Awin, Lomadee). Sem raspar sites.
+4. Contas opcionais, lista do mês e alertas de preço.
 
 ## Princípio
 

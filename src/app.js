@@ -5,139 +5,60 @@ import {
   grupoDaOferta,
   compararOfertas,
   precoExibido,
+  quantidadeDoAnuncio,
   fmtPct,
 } from './core.js';
+import { buscarProdutos, modoDemo } from './fontes.js';
+import { fotoReserva } from './demo.js';
 
 // ---------------------------------------------------------------------------
-// Estado
+// Preferências (ficam neste aparelho; nada vai para servidor)
 // ---------------------------------------------------------------------------
 
-const CHAVE = 'minhas-compras:v1';
-
-const EXEMPLO = {
-  exemplo: true,
-  produto: { nome: 'Sabonete líquido Marca X', minimo: '', maxUnidades: '6' },
-  ofertas: [
-    {
-      loja: 'Amazon',
-      titulo: 'Sabonete Líquido Marca X Refil 900 ml',
-      link: '',
-      preco: '24,90',
-      embalagens: '1',
-      conteudo: '900',
-      unidade: 'ml',
-      frete: '12,90',
-      freteGratisAcima: '79',
-      pixPct: '',
-      descontos: [
-        { minQtd: '5', pct: '5' },
-        { minQtd: '10', pct: '10' },
-      ],
-    },
-    {
-      loja: 'Mercado Livre',
-      titulo: 'Kit 3 Sabonete Líquido Marca X 250 ml',
-      link: '',
-      preco: '29,90',
-      embalagens: '3',
-      conteudo: '250',
-      unidade: 'ml',
-      frete: '9,90',
-      freteGratisAcima: '19',
-      pixPct: '',
-      descontos: [],
-    },
-    {
-      loja: 'Magalu',
-      titulo: 'Sabonete Líquido Marca X 650 ml com válvula',
-      link: '',
-      preco: '19,90',
-      embalagens: '1',
-      conteudo: '650',
-      unidade: 'ml',
-      frete: '14,90',
-      freteGratisAcima: '99',
-      pixPct: '5',
-      descontos: [],
-    },
-    {
-      loja: 'Farmácia online',
-      titulo: 'Sabonete Líquido Marca X Refil 2x900ml',
-      link: '',
-      preco: '52,90',
-      embalagens: '2',
-      conteudo: '900',
-      unidade: 'ml',
-      frete: '0',
-      freteGratisAcima: '',
-      pixPct: '5',
-      descontos: [],
-    },
-  ],
+const CHAVE = 'minhas-compras:v2';
+const PADRAO = {
+  cep: '',
+  minimo: '',
+  maxUnidades: '6',
+  filtros: { freteGratis: false, oficial: false },
+  ordem: 'unidade',
+  tamanhos: {},
+  manuais: {},
+  ultimaBusca: '',
 };
-
-const novaId = () => Math.random().toString(36).slice(2, 9);
-const comIds = (e) => ({ ...e, ofertas: e.ofertas.map((o) => ({ id: novaId(), ...o, descontos: (o.descontos || []).map((d) => ({ ...d })) })) });
-
-function ofertaVazia() {
-  return {
-    id: novaId(),
-    loja: '',
-    titulo: '',
-    link: '',
-    preco: '',
-    embalagens: '1',
-    conteudo: '',
-    unidade: 'ml',
-    frete: '',
-    freteGratisAcima: '',
-    pixPct: '',
-    descontos: [],
-  };
-}
 
 function carregar() {
   try {
-    const bruto = localStorage.getItem(CHAVE);
-    if (bruto) {
-      const e = JSON.parse(bruto);
-      if (e && Array.isArray(e.ofertas) && e.produto) return e;
-    }
+    const p = JSON.parse(localStorage.getItem(CHAVE) || 'null');
+    if (p && typeof p === 'object') return { ...PADRAO, ...p, filtros: { ...PADRAO.filtros, ...(p.filtros || {}) } };
   } catch (_) {
-    /* sem armazenamento: segue com o exemplo */
+    /* sem armazenamento */
   }
-  return comIds(EXEMPLO);
+  return structuredClone(PADRAO);
 }
-
+const prefs = carregar();
 function salvar() {
   try {
-    localStorage.setItem(CHAVE, JSON.stringify(estado));
+    localStorage.setItem(CHAVE, JSON.stringify(prefs));
   } catch (_) {
-    /* sem armazenamento: o app funciona, só não lembra */
+    /* o app funciona sem lembrar */
   }
 }
 
-let estado = carregar();
+const busca = { q: '', itens: [], verificadoEm: null, demo: false, aviso: '', carregando: false, erro: '' };
+let editando = null; // id do item com o tamanho em edição
 
 // ---------------------------------------------------------------------------
 // Formatação
 // ---------------------------------------------------------------------------
 
+const $ = (s, r = document) => r.querySelector(s);
 const brl = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-const num1 = (v) => v.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+const num = (v) => v.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
 const SIGLA = { volume: 'L', massa: 'kg', unidade: 'un', comprimento: 'm' };
-const BASE = { volume: 'ml', massa: 'g', unidade: 'un', comprimento: 'm' };
-
-function fmtQtd(base, grupo) {
-  if (grupo === 'volume') return base >= 1000 ? `${num1(base / 1000)} L` : `${num1(base)} ml`;
-  if (grupo === 'massa') return base >= 1000 ? `${num1(base / 1000)} kg` : `${num1(base)} g`;
-  if (grupo === 'comprimento') return `${num1(base)} m`;
-  return `${num1(base)} un`;
-}
-
+const POR = { volume: 'litro', massa: 'quilo', unidade: 'unidade', comprimento: 'metro' };
 const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
 const linkSeguro = (u) => {
   try {
     const url = new URL(String(u).trim());
@@ -146,11 +67,20 @@ const linkSeguro = (u) => {
     return '';
   }
 };
+const chaveBusca = (q) => q.trim().toLowerCase().replace(/\s+/g, ' ');
 
-const nomeDaOferta = (o) => o.titulo?.trim() || 'Anúncio sem título';
-const lojaDaOferta = (o) => o.loja?.trim() || 'Loja sem nome';
+function fmtQtd(base, grupo) {
+  if (grupo === 'volume') return base >= 1000 ? `${num(base / 1000)} L` : `${num(base)} ml`;
+  if (grupo === 'massa') return base >= 1000 ? `${num(base / 1000)} kg` : `${num(base)} g`;
+  if (grupo === 'comprimento') return `${num(base)} m`;
+  return `${num(base)} un`;
+}
 
-/** "2 L", "1500 ml" ou "1500" (na unidade base do produto). */
+function descricaoTamanho(i) {
+  const total = fmtQtd(quantidadeDoAnuncio(i), grupoDaOferta(i));
+  return i.embalagens > 1 ? `${total} · ${i.embalagens} × ${num(i.conteudo)} ${i.unidade}` : total;
+}
+
 function lerQuantidadeMinima(txt) {
   if (!txt || !String(txt).trim()) return 0;
   const lido = lerTitulo(txt);
@@ -159,346 +89,371 @@ function lerQuantidadeMinima(txt) {
 }
 
 // ---------------------------------------------------------------------------
-// Ofertas (formulário)
+// Cálculo
 // ---------------------------------------------------------------------------
 
-const $ = (s, r = document) => r.querySelector(s);
-
-function campo(o, nome, rotulo, { dica = '', tipo = 'decimal', ph = '', largura = '' } = {}) {
-  const id = `${nome}-${o.id}`;
-  const modo = tipo === 'texto' ? 'text' : tipo === 'url' ? 'url' : 'decimal';
-  return `<label class="campo ${largura}" for="${id}">
-    <span class="rotulo">${rotulo}</span>
-    <input id="${id}" data-campo="${nome}" type="${tipo === 'url' ? 'url' : 'text'}" inputmode="${modo}"
-      value="${esc(o[nome])}" placeholder="${esc(ph)}" autocomplete="off">
-    ${dica ? `<span class="dica">${dica}</span>` : ''}
-  </label>`;
+function itensDaBusca() {
+  const manuais = prefs.manuais[chaveBusca(busca.q)] || [];
+  return [...busca.itens, ...manuais].map((i) => {
+    const t = prefs.tamanhos[i.id];
+    return t ? { ...i, ...t, fonteConteudo: 'voce' } : i;
+  });
 }
 
-function htmlOferta(o, i) {
-  const unidades = Object.keys(UNIDADES)
-    .map((u) => `<option value="${u}" ${o.unidade === u ? 'selected' : ''}>${u}</option>`)
-    .join('');
-  const faixas = (o.descontos || [])
-    .map(
-      (d, j) => `<div class="faixa" data-faixa="${j}">
-        <span>A partir de</span>
-        <input id="fx-min-${o.id}-${j}" aria-label="Quantidade mínima" data-faixa-campo="minQtd" inputmode="numeric" value="${esc(d.minQtd)}" placeholder="5">
-        <span>unid.,</span>
-        <input id="fx-pct-${o.id}-${j}" aria-label="Desconto em %" data-faixa-campo="pct" inputmode="decimal" value="${esc(d.pct)}" placeholder="5">
-        <span>% de desconto</span>
-        <button type="button" class="icone" data-acao="remover-faixa" aria-label="Remover faixa">×</button>
-      </div>`
-    )
-    .join('');
-  return `<fieldset class="oferta" data-id="${o.id}">
-    <legend><span class="num">${i + 1}</span>${esc(lojaDaOferta(o))}</legend>
-    <div class="grade">
-      ${campo(o, 'loja', 'Loja', { tipo: 'texto', ph: 'Amazon, Mercado Livre…' })}
-      ${campo(o, 'link', 'Link do anúncio', { tipo: 'url', ph: 'https://…', largura: 'meia' })}
-      ${campo(o, 'titulo', 'Título do anúncio', { tipo: 'texto', ph: 'Cole o título: “Kit 3 Sabonete 250 ml”', largura: 'cheia', dica: `<span data-lido></span>` })}
-      ${campo(o, 'preco', 'Preço do anúncio', { ph: '24,90', dica: 'R$' })}
-      ${campo(o, 'embalagens', 'Embalagens no anúncio', { ph: '1', dica: 'kit de 3 = 3' })}
-      <div class="campo conteudo">
-        <label class="rotulo" for="conteudo-${o.id}">Conteúdo de cada</label>
-        <div class="junto">
-          <input id="conteudo-${o.id}" data-campo="conteudo" inputmode="decimal" value="${esc(o.conteudo)}" placeholder="900" autocomplete="off">
-          <select id="unidade-${o.id}" data-campo="unidade" aria-label="Unidade">${unidades}</select>
-        </div>
-      </div>
-      ${campo(o, 'frete', 'Frete', { ph: '0 = grátis', dica: 'R$ para o seu CEP' })}
-      ${campo(o, 'freteGratisAcima', 'Frete grátis a partir de', { ph: 'ex.: 19', dica: 'R$ em produtos' })}
-      ${campo(o, 'pixPct', 'Desconto no Pix', { ph: '0', dica: '%' })}
-    </div>
-    <div class="faixas">
-      <span class="rotulo">Desconto por quantidade</span>
-      ${faixas || '<p class="vazio">Nenhum. Use quando a loja dá desconto ao levar várias unidades.</p>'}
-      <button type="button" class="link" data-acao="add-faixa">+ Adicionar faixa de desconto</button>
-    </div>
-    <div class="acoes-oferta">
-      <button type="button" class="link perigo" data-acao="remover">Remover oferta</button>
-    </div>
-  </fieldset>`;
-}
+function calcular() {
+  const itens = itensDaBusca();
+  const comTamanho = itens.filter((i) => lerNumero(i.conteudo) > 0 && UNIDADES[i.unidade]);
+  const semTamanho = itens.filter((i) => !(lerNumero(i.conteudo) > 0 && UNIDADES[i.unidade]));
 
-function desenharOfertas() {
-  $('#ofertas').innerHTML = estado.ofertas.map(htmlOferta).join('');
-  estado.ofertas.forEach(atualizarLeituraDoTitulo);
-}
+  // O grupo (litro, quilo...) é o mais comum entre os resultados
+  const contagem = {};
+  for (const i of comTamanho) contagem[grupoDaOferta(i)] = (contagem[grupoDaOferta(i)] || 0) + 1;
+  const grupo = Object.entries(contagem).sort((a, b) => b[1] - a[1])[0]?.[0] || 'volume';
 
-function atualizarLeituraDoTitulo(o) {
-  const alvo = document.querySelector(`.oferta[data-id="${o.id}"] [data-lido]`);
-  if (!alvo) return;
-  const lido = lerTitulo(o.titulo);
-  alvo.textContent = lido
-    ? `Entendi: ${lido.embalagens > 1 ? `${lido.embalagens} × ` : ''}${num1(lido.conteudo)} ${lido.unidade}`
-    : o.titulo
-      ? 'Não achei o conteúdo no título. Preencha abaixo.'
-      : '';
-}
-
-const ofertaDe = (el) => estado.ofertas.find((o) => o.id === el.closest('.oferta')?.dataset.id);
-
-function aoDigitarOferta(ev) {
-  const el = ev.target;
-  const o = ofertaDe(el);
-  if (!o) return;
-  if (el.dataset.faixaCampo) {
-    const j = Number(el.closest('.faixa').dataset.faixa);
-    o.descontos[j][el.dataset.faixaCampo] = el.value;
-  } else if (el.dataset.campo) {
-    const c = el.dataset.campo;
-    o[c] = el.value;
-    if (c === 'conteudo' || c === 'embalagens' || c === 'unidade') o.manual = true;
-    if (c === 'titulo') {
-      const lido = lerTitulo(o.titulo);
-      if (lido && !o.manual) {
-        o.embalagens = String(lido.embalagens);
-        o.conteudo = String(lido.conteudo).replace('.', ',');
-        o.unidade = lido.unidade;
-        const raiz = el.closest('.oferta');
-        $('[data-campo="embalagens"]', raiz).value = o.embalagens;
-        $('[data-campo="conteudo"]', raiz).value = o.conteudo;
-        $('[data-campo="unidade"]', raiz).value = o.unidade;
-      }
-      atualizarLeituraDoTitulo(o);
-    }
-    if (c === 'loja') el.closest('.oferta').querySelector('legend').lastChild.textContent = lojaDaOferta(o);
-  }
-  sairDoExemplo();
-  salvar();
-  desenharResultado();
-}
-
-let removida = null;
-
-function aoClicarOferta(ev) {
-  const b = ev.target.closest('[data-acao]');
-  if (!b) return;
-  const o = ofertaDe(b);
-  if (!o) return;
-  const acao = b.dataset.acao;
-  if (acao === 'add-faixa') {
-    o.descontos.push({ minQtd: '', pct: '' });
-    desenharOfertas();
-    const ultimo = document.querySelectorAll(`.oferta[data-id="${o.id}"] .faixa input`);
-    ultimo[ultimo.length - 2]?.focus();
-  } else if (acao === 'remover-faixa') {
-    o.descontos.splice(Number(b.closest('.faixa').dataset.faixa), 1);
-    desenharOfertas();
-  } else if (acao === 'remover') {
-    const i = estado.ofertas.indexOf(o);
-    removida = { oferta: o, i };
-    estado.ofertas.splice(i, 1);
-    desenharOfertas();
-    avisar(`Oferta de ${lojaDaOferta(o)} removida.`, 'Desfazer', () => {
-      if (!removida) return;
-      estado.ofertas.splice(removida.i, 0, removida.oferta);
-      removida = null;
-      desenharOfertas();
-      salvar();
-      desenharResultado();
-    });
-  }
-  sairDoExemplo();
-  salvar();
-  desenharResultado();
+  const filtrados = comTamanho.filter(
+    (i) => (!prefs.filtros.freteGratis || i.freteGratis || i.frete === 0) && (!prefs.filtros.oficial || i.lojaOficial)
+  );
+  const ofertas = filtrados.map((i) => ({
+    loja: i.loja,
+    titulo: i.titulo,
+    preco: i.preco,
+    embalagens: i.embalagens || 1,
+    conteudo: i.conteudo,
+    unidade: i.unidade,
+    frete: i.frete ?? 0,
+    freteGratisAcima: i.freteGratisAcima || '',
+    pixPct: i.pixPct || '',
+    descontos: i.descontos || [],
+    item: i,
+  }));
+  const res = compararOfertas(ofertas, {
+    grupo,
+    quantidadeMinima: lerQuantidadeMinima(prefs.minimo),
+    maxUnidades: Math.max(1, Math.min(50, Math.round(lerNumero(prefs.maxUnidades, 6)) || 6)),
+  });
+  const melhor = res.ranking[0] || null;
+  const lista = [...res.ranking];
+  if (prefs.ordem === 'total') lista.sort((a, b) => a.escolhida.total - b.escolhida.total);
+  return { grupo, melhor, lista, semTamanho, ocultos: comTamanho.length - filtrados.length, outraUnidade: res.ignoradas.length };
 }
 
 // ---------------------------------------------------------------------------
-// Resultado
+// Pedaços da tela
 // ---------------------------------------------------------------------------
 
-function linhasDoCupom(r, grupo) {
-  const e = r.escolhida;
-  const o = r.oferta;
-  const linhas = [];
-  linhas.push([`Produtos (${e.n} × ${brl(lerNumero(o.preco))})`, brl(e.bruto)]);
-  if (e.pctQtd > 0) linhas.push([`Desconto por quantidade (${fmtPct(e.pctQtd)})`, `− ${brl(e.bruto - e.produtos)}`]);
-  if (e.pctPix > 0) linhas.push([`Desconto no Pix (${fmtPct(e.pctPix)})`, `− ${brl(e.produtos - e.produtosPagos)}`]);
-  if (e.ganhouFreteGratis) linhas.push([`Frete (grátis, era ${brl(e.freteCheio)})`, brl(0)]);
-  else linhas.push([e.frete > 0 ? 'Frete' : 'Frete grátis', brl(e.frete)]);
-  return linhas
-    .map(([a, b]) => `<div class="linha"><span>${a}</span><span>${b}</span></div>`)
-    .join('')
-    .concat(
-      `<div class="linha total"><span>Você paga</span><span>${brl(e.total)}</span></div>
-       <div class="linha"><span>Você leva</span><span>${fmtQtd(e.quantidade, grupo)}</span></div>`
-    );
+const foto = (i, classe = '') =>
+  `<img class="${classe}" src="${esc(i.foto || fotoReserva)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">`;
+
+function chipFrete(i, e) {
+  if (e?.ganhouFreteGratis) return `<span class="chip bom">Frete grátis levando ${e.n}</span>`;
+  if (i.freteGratis || i.frete === 0) return '<span class="chip bom">Frete grátis</span>';
+  if (i.frete == null) return `<span class="chip" title="Informe seu CEP para incluir o frete">Frete a calcular</span>`;
+  return `<span class="chip">Frete ${brl(i.frete)}</span>`;
 }
 
-function chips(e) {
-  const c = [];
-  if (e.frete === 0) c.push(`<span class="chip bom">${e.ganhouFreteGratis ? 'Ganha frete grátis' : 'Frete grátis'}</span>`);
-  else c.push(`<span class="chip">Frete ${brl(e.frete)}</span>`);
-  if (e.pctQtd > 0) c.push(`<span class="chip bom">−${fmtPct(e.pctQtd)} por quantidade</span>`);
-  if (e.pctPix > 0) c.push(`<span class="chip">−${fmtPct(e.pctPix)} no Pix</span>`);
+function chips(i, e) {
+  const c = [chipFrete(i, e)];
+  if (i.full) c.push('<span class="chip">Full</span>');
+  if (i.lojaOficial) c.push('<span class="chip">Loja oficial</span>');
+  if (e?.pctQtd > 0) c.push(`<span class="chip bom">−${fmtPct(e.pctQtd)} levando ${e.n}</span>`);
+  if (e?.pctPix > 0) c.push(`<span class="chip">−${fmtPct(e.pctPix)} no Pix</span>`);
+  if (i.fonte === 'manual') c.push('<span class="chip">Adicionado por você</span>');
   return c.join('');
 }
 
-function desenharResultado() {
-  const p = estado.produto;
-  const opcoes = {
-    quantidadeMinima: lerQuantidadeMinima(p.minimo),
-    maxUnidades: Math.max(1, Math.min(50, Math.round(lerNumero(p.maxUnidades, 6)) || 6)),
-  };
-  const res = compararOfertas(estado.ofertas, opcoes);
-  const { ranking, grupo } = res;
-  const sigla = SIGLA[grupo];
-  $('#unidade-minimo').textContent = BASE[grupo];
+function editorTamanho(i) {
+  return `<form class="tamanho" data-tamanho="${esc(i.id)}">
+    <label class="sr" for="tam-${esc(i.id)}">Tamanho do produto</label>
+    <input id="tam-${esc(i.id)}" name="tamanho" placeholder="ex.: 900 ml ou 3 x 250 ml" autocomplete="off"
+      value="${i.conteudo ? esc(`${i.embalagens > 1 ? `${i.embalagens} x ` : ''}${num(i.conteudo)} ${i.unidade}`) : ''}">
+    <button type="submit">Usar</button>
+    <p class="erro-campo" hidden></p>
+  </form>`;
+}
 
-  const avisos = [];
-  if (res.incompletas.length)
-    avisos.push(`${res.incompletas.length === 1 ? '1 oferta está' : `${res.incompletas.length} ofertas estão`} sem preço ou conteúdo e ficou de fora.`);
-  if (res.ignoradas.length)
-    avisos.push(`${res.ignoradas.map(lojaDaOferta).join(', ')} usa outra unidade (${res.ignoradas.map((o) => o.unidade).join(', ')}) e não entra na comparação.`);
-  $('#avisos').innerHTML = avisos.map((a) => `<p>${esc(a)}</p>`).join('');
-
-  const vencedor = $('#vencedor');
-  if (!ranking.length) {
-    vencedor.innerHTML = `<div class="etiqueta vazia">
+function htmlMelhor(r, grupo) {
+  const i = r.oferta.item;
+  const e = r.escolhida;
+  const link = linkSeguro(i.link);
+  const levar = e.n > 1 ? `Leve <strong>${e.n}</strong> · ` : '';
+  return `<article class="melhor">
+    <div class="melhor-foto">${foto(i)}</div>
+    <div class="melhor-info">
       <span class="eyebrow">Melhor compra</span>
-      <p>Adicione ofertas com preço e conteúdo para ver qual sai mais barata.</p></div>`;
-    $('#ranking').innerHTML = '';
+      <div class="etiqueta">
+        <span class="etq-rotulo">Preço por ${POR[grupo]}</span>
+        <span class="etq-valor">${brl(precoExibido(e.custoPorBase, grupo))}<small>/${SIGLA[grupo]}</small></span>
+      </div>
+      <h2 class="melhor-titulo">${esc(i.titulo)}</h2>
+      <p class="melhor-loja">${esc(i.loja)}${i.vendedor ? ` · ${esc(i.vendedor)}` : ''}</p>
+      <p class="melhor-conta">${levar}${brl(e.total)} por ${fmtQtd(e.quantidade, grupo)}${e.frete > 0 ? ` (com ${brl(e.frete)} de frete)` : ''}</p>
+      <div class="chips">${chips(i, e)}</div>
+      ${r.dicas.length ? `<p class="dica-boa">${esc(r.dicas[0])}</p>` : ''}
+      ${link ? `<a class="botao" href="${esc(link)}" target="_blank" rel="noopener noreferrer">Ver na loja <span aria-hidden="true">↗</span></a>` : ''}
+    </div>
+  </article>`;
+}
+
+function htmlCartao(r, grupo, melhor, pos) {
+  const i = r.oferta.item;
+  const e = r.escolhida;
+  const link = linkSeguro(i.link);
+  const delta = r === melhor ? '<span class="delta bom">Mais barato</span>' : `<span class="delta">+${fmtPct((e.custoPorBase / melhor.escolhida.custoPorBase - 1) * 100)} por ${SIGLA[grupo]}</span>`;
+  return `<article class="cartao${r === melhor ? ' primeiro' : ''}">
+    <div class="foto">${foto(i)}<span class="tag">${brl(precoExibido(e.custoPorBase, grupo))}<small>/${SIGLA[grupo]}</small></span><span class="pos">${pos}</span></div>
+    <div class="info">
+      <p class="loja">${esc(i.loja)}</p>
+      <h3 class="titulo" title="${esc(i.titulo)}">${esc(i.titulo)}</h3>
+      <p class="qtd">${esc(descricaoTamanho(i))}
+        <button type="button" class="mini" data-editar="${esc(i.id)}">${i.fonteConteudo === 'voce' ? 'alterar' : 'corrigir'}</button></p>
+      ${editando === i.id ? editorTamanho(i) : ''}
+      <p class="preco">${i.precoOriginal > i.preco ? `<s>${brl(i.precoOriginal)}</s>` : ''}${brl(i.preco)}${e.n > 1 ? `<span class="leve"> · leve ${e.n}</span>` : ''}</p>
+      <div class="chips">${chips(i, e)}</div>
+      <div class="pe">
+        ${delta}
+        ${link ? `<a class="ver" href="${esc(link)}" target="_blank" rel="noopener noreferrer">Ver na loja ↗</a>` : ''}
+        ${i.fonte === 'manual' ? `<button type="button" class="mini perigo" data-remover="${esc(i.id)}">Remover</button>` : ''}
+      </div>
+    </div>
+  </article>`;
+}
+
+function htmlSemTamanho(lista) {
+  if (!lista.length) return '';
+  return `<section class="sem-tamanho" aria-labelledby="t-sem">
+    <h2 id="t-sem">Sem tamanho no anúncio</h2>
+    <p class="nota">Não achei o tamanho nestes anúncios. Diga o tamanho e eles entram na comparação.</p>
+    <ul>${lista
+      .map(
+        (i) => `<li>
+          ${foto(i, 'mini-foto')}
+          <div class="st-info">
+            <p class="st-titulo">${esc(i.titulo)}</p>
+            <p class="st-loja">${esc(i.loja)} · ${brl(lerNumero(i.preco))}</p>
+            ${editorTamanho(i)}
+          </div>
+        </li>`
+      )
+      .join('')}</ul>
+  </section>`;
+}
+
+function esqueleto() {
+  return `<div class="grade-cartoes" aria-hidden="true">${'<div class="cartao esq"><div class="foto"></div><div class="info"><span></span><span></span><span></span></div></div>'.repeat(6)}</div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Desenho do resultado
+// ---------------------------------------------------------------------------
+
+function desenhar() {
+  const alvo = $('#resultado');
+
+  if (busca.carregando) {
+    alvo.innerHTML = `<p class="status">Buscando ofertas de “${esc(busca.q)}”…</p>${esqueleto()}`;
+    return;
+  }
+  if (busca.erro) {
+    alvo.innerHTML = `<div class="aviso-erro" role="alert"><strong>A busca não deu certo.</strong> ${esc(busca.erro)}
+      <button type="button" class="botao-sec" data-acao="repetir">Tentar de novo</button></div>`;
+    return;
+  }
+  if (!busca.q) {
+    alvo.innerHTML = '';
     return;
   }
 
-  const r = ranking[0];
-  const e = r.escolhida;
-  const link = linkSeguro(r.oferta.link);
-  const economia =
-    ranking.length > 1 && res.economiaVsMaisCara > 0.0005
-      ? `<p class="economia">Sai ${fmtPct(res.economiaVsMaisCara * 100)} mais barato que a opção mais cara da lista.</p>`
-      : '';
-  vencedor.innerHTML = `
-    <div class="etiqueta">
-      <div class="etiqueta-topo">
-        <span class="eyebrow">Melhor compra · preço por ${sigla === 'L' ? 'litro' : sigla === 'kg' ? 'quilo' : sigla === 'un' ? 'unidade' : 'metro'}</span>
-        <span class="loja">${esc(lojaDaOferta(r.oferta))}</span>
+  const { grupo, melhor, lista, semTamanho, ocultos, outraUnidade } = calcular();
+  const hora = busca.verificadoEm ? new Date(busca.verificadoEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+  const total = lista.length + semTamanho.length;
+  const extras = [];
+  if (ocultos) extras.push(`${ocultos} escondida${ocultos > 1 ? 's' : ''} pelos filtros`);
+  if (outraUnidade) extras.push(`${outraUnidade} em outra unidade`);
+
+  alvo.innerHTML = `
+    ${busca.aviso ? `<p class="faixa-demo">${esc(busca.aviso)}</p>` : ''}
+    <p class="status">${total} oferta${total === 1 ? '' : 's'} para “${esc(busca.q)}”${hora ? ` · conferido às ${hora}` : ''}${extras.length ? ` · ${extras.join(', ')}` : ''}</p>
+    ${melhor ? htmlMelhor(melhor, grupo) : '<div class="vazio-bloco">Nenhuma oferta com tamanho conhecido passou pelos filtros.</div>'}
+    <div class="barra-ferramentas">
+      <div class="segmentado" role="group" aria-label="Ordenar">
+        <button type="button" data-ordem="unidade" aria-pressed="${prefs.ordem === 'unidade'}">Preço por ${POR[grupo]}</button>
+        <button type="button" data-ordem="total" aria-pressed="${prefs.ordem === 'total'}">Preço total</button>
       </div>
-      <div class="preco-un"><span class="valor">${brl(precoExibido(e.custoPorBase, grupo))}</span><span class="por">/${sigla}</span></div>
-      <p class="leve">Leve <strong>${e.n}</strong> × ${esc(nomeDaOferta(r.oferta))}</p>
+      <div class="filtros">
+        <button type="button" class="filtro" data-filtro="freteGratis" aria-pressed="${prefs.filtros.freteGratis}">Frete grátis</button>
+        <button type="button" class="filtro" data-filtro="oficial" aria-pressed="${prefs.filtros.oficial}">Loja oficial</button>
+      </div>
     </div>
-    <div class="cupom">${linhasDoCupom(r, grupo)}</div>
-    ${r.dicas.length ? `<ul class="dicas">${r.dicas.map((d) => `<li>${esc(d)}</li>`).join('')}</ul>` : ''}
-    ${economia}
-    ${link ? `<a class="botao" href="${esc(link)}" target="_blank" rel="noopener noreferrer">Abrir na loja</a>` : ''}
+    ${melhor ? `<div class="grade-cartoes">${lista.map((r, k) => htmlCartao(r, grupo, melhor, k + 1)).join('')}</div>` : ''}
+    ${htmlSemTamanho(semTamanho)}
+    <details class="manual" id="manual">
+      <summary>Achou em outra loja? Adicione aqui</summary>
+      <form id="form-manual" class="form-manual">
+        <label for="m-loja">Loja<input id="m-loja" name="loja" placeholder="Supermercado do bairro" autocomplete="off"></label>
+        <label for="m-titulo" class="largo">Produto e tamanho<input id="m-titulo" name="titulo" placeholder="Sabonete líquido Marca X refil 900 ml" autocomplete="off"></label>
+        <label for="m-preco">Preço<input id="m-preco" name="preco" inputmode="decimal" placeholder="21,90" autocomplete="off"></label>
+        <label for="m-frete">Frete<input id="m-frete" name="frete" inputmode="decimal" placeholder="0 = grátis" autocomplete="off"></label>
+        <label for="m-link" class="largo">Link (opcional)<input id="m-link" name="link" type="url" placeholder="https://…" autocomplete="off"></label>
+        <p class="erro-campo largo" hidden></p>
+        <button type="submit" class="botao">Adicionar à comparação</button>
+      </form>
+    </details>
+    <p class="regras">O preço por ${POR[grupo]} soma o produto e o frete. O desconto no Pix não vale sobre o frete, e o frete grátis por valor mínimo é conferido depois do desconto por quantidade. Os preços mudam o tempo todo: confira na loja antes de pagar.</p>
   `;
-
-  const maior = Math.max(...ranking.map((x) => x.escolhida.custoPorBase));
-  $('#ranking').innerHTML = ranking
-    .map((x, i) => {
-      const ex = x.escolhida;
-      const diff = i === 0 ? 'Mais barata' : `+${fmtPct((ex.custoPorBase / e.custoPorBase - 1) * 100)}`;
-      const lk = linkSeguro(x.oferta.link);
-      const larg = Math.max(4, (ex.custoPorBase / maior) * 100);
-      return `<li class="${i === 0 ? 'primeira' : ''}">
-        <div class="pos">${i + 1}</div>
-        <div class="corpo">
-          <div class="cabeca">
-            <span class="r-loja">${esc(lojaDaOferta(x.oferta))}</span>
-            <span class="r-preco">${brl(precoExibido(ex.custoPorBase, grupo))}<small>/${sigla}</small></span>
-          </div>
-          <div class="barra" aria-hidden="true"><span style="width:${larg.toFixed(1)}%"></span></div>
-          <p class="r-titulo">Leve ${ex.n} × ${esc(nomeDaOferta(x.oferta))}</p>
-          <div class="r-pe">
-            <span class="r-total">${brl(ex.total)} por ${fmtQtd(ex.quantidade, grupo)}</span>
-            <span class="r-diff ${i === 0 ? 'bom' : ''}">${diff}</span>
-          </div>
-          <div class="chips">${chips(ex)}${lk ? `<a class="chip link-loja" href="${esc(lk)}" target="_blank" rel="noopener noreferrer">Abrir ↗</a>` : ''}</div>
-          ${i > 0 && x.dicas.length ? `<p class="r-dica">${esc(x.dicas[0])}</p>` : ''}
-        </div>
-      </li>`;
-    })
-    .join('');
 }
 
 // ---------------------------------------------------------------------------
-// Produto, exemplo, avisos
+// Ações
 // ---------------------------------------------------------------------------
 
-function desenharProduto() {
-  $('#produto-nome').value = estado.produto.nome || '';
-  $('#produto-minimo').value = estado.produto.minimo || '';
-  $('#produto-max').value = estado.produto.maxUnidades || '';
-  $('#selo-exemplo').hidden = !estado.exemplo;
-}
-
-function sairDoExemplo() {
-  if (estado.exemplo) {
-    estado.exemplo = false;
-    $('#selo-exemplo').hidden = true;
+async function executarBusca(q) {
+  q = q.trim();
+  if (q.length < 2) {
+    $('#q').focus();
+    return;
   }
+  busca.q = q;
+  busca.carregando = true;
+  busca.erro = '';
+  editando = null;
+  prefs.ultimaBusca = q;
+  salvar();
+  desenhar();
+  try {
+    const r = await buscarProdutos(q, { cep: prefs.cep });
+    Object.assign(busca, r, { carregando: false });
+  } catch (e) {
+    Object.assign(busca, { itens: [], carregando: false, erro: e.message });
+  }
+  desenhar();
 }
 
-let timerAviso;
-function avisar(texto, rotuloAcao, acao) {
-  const t = $('#aviso');
-  t.innerHTML = `<span>${esc(texto)}</span>${rotuloAcao ? `<button type="button">${esc(rotuloAcao)}</button>` : ''}`;
-  t.hidden = false;
-  if (rotuloAcao) t.querySelector('button').onclick = () => { acao(); t.hidden = true; };
-  clearTimeout(timerAviso);
-  timerAviso = setTimeout(() => { t.hidden = true; removida = null; }, 6000);
+function aoClicar(ev) {
+  const b = ev.target.closest('button');
+  if (!b) return;
+  if (b.dataset.ordem) {
+    prefs.ordem = b.dataset.ordem;
+  } else if (b.dataset.filtro) {
+    prefs.filtros[b.dataset.filtro] = !prefs.filtros[b.dataset.filtro];
+  } else if (b.dataset.editar) {
+    editando = editando === b.dataset.editar ? null : b.dataset.editar;
+    desenhar();
+    $(`[data-tamanho="${CSS.escape(b.dataset.editar)}"] input`)?.focus();
+    return;
+  } else if (b.dataset.remover) {
+    const k = chaveBusca(busca.q);
+    prefs.manuais[k] = (prefs.manuais[k] || []).filter((i) => i.id !== b.dataset.remover);
+  } else if (b.dataset.acao === 'repetir') {
+    executarBusca(busca.q);
+    return;
+  } else return;
+  salvar();
+  desenhar();
+}
+
+function erroNoForm(form, texto) {
+  const p = $('.erro-campo', form);
+  p.textContent = texto;
+  p.hidden = !texto;
+}
+
+function aoEnviar(ev) {
+  const form = ev.target;
+  ev.preventDefault();
+  if (form.dataset.tamanho) {
+    const lido = lerTitulo(form.tamanho.value);
+    if (!lido) return erroNoForm(form, 'Escreva o tamanho com a unidade, como 900 ml, 1 kg ou 3 x 250 ml.');
+    prefs.tamanhos[form.dataset.tamanho] = lido;
+    editando = null;
+  } else if (form.id === 'form-manual') {
+    const d = Object.fromEntries(new FormData(form));
+    const preco = lerNumero(d.preco, 0);
+    const lido = lerTitulo(d.titulo);
+    if (!d.loja.trim()) return erroNoForm(form, 'Diga o nome da loja.');
+    if (!(preco > 0)) return erroNoForm(form, 'Informe o preço, por exemplo 21,90.');
+    if (!lido) return erroNoForm(form, 'Coloque o tamanho no nome do produto, como “refil 900 ml”.');
+    const frete = d.frete.trim() === '' ? 0 : lerNumero(d.frete, 0);
+    const k = chaveBusca(busca.q);
+    prefs.manuais[k] = [
+      ...(prefs.manuais[k] || []),
+      {
+        id: `manual:${Math.random().toString(36).slice(2, 9)}`,
+        fonte: 'manual',
+        loja: d.loja.trim(),
+        titulo: d.titulo.trim(),
+        preco,
+        frete,
+        freteGratis: frete === 0,
+        link: d.link.trim(),
+        foto: null,
+        ...lido,
+      },
+    ];
+  } else return;
+  salvar();
+  desenhar();
 }
 
 function iniciar() {
-  desenharProduto();
-  desenharOfertas();
-  desenharResultado();
+  const fCep = $('#cep');
+  fCep.value = prefs.cep;
+  $('#minimo').value = prefs.minimo;
+  $('#max').value = prefs.maxUnidades;
 
-  $('#ofertas').addEventListener('input', aoDigitarOferta);
-  $('#ofertas').addEventListener('change', aoDigitarOferta);
-  $('#ofertas').addEventListener('click', aoClicarOferta);
-
-  for (const [id, chave] of [['produto-nome', 'nome'], ['produto-minimo', 'minimo'], ['produto-max', 'maxUnidades']]) {
+  $('#form-busca').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    executarBusca($('#q').value);
+  });
+  $('#sugestoes').addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-q]');
+    if (!b) return;
+    $('#q').value = b.dataset.q;
+    executarBusca(b.dataset.q);
+  });
+  fCep.addEventListener('input', () => {
+    const d = fCep.value.replace(/\D/g, '').slice(0, 8);
+    fCep.value = d.length > 5 ? `${d.slice(0, 5)}-${d.slice(5)}` : d;
+    prefs.cep = fCep.value;
+    salvar();
+  });
+  fCep.addEventListener('change', () => {
+    if (busca.q && !busca.demo && prefs.cep.replace(/\D/g, '').length === 8) executarBusca(busca.q);
+  });
+  for (const [id, chave] of [['minimo', 'minimo'], ['max', 'maxUnidades']]) {
     $(`#${id}`).addEventListener('input', (ev) => {
-      estado.produto[chave] = ev.target.value;
-      sairDoExemplo();
+      prefs[chave] = ev.target.value;
       salvar();
-      desenharResultado();
+      desenhar();
     });
   }
+  $('#resultado').addEventListener('click', aoClicar);
+  $('#resultado').addEventListener('submit', aoEnviar);
 
-  $('#add-oferta').addEventListener('click', () => {
-    const o = ofertaVazia();
-    const ultima = estado.ofertas[estado.ofertas.length - 1];
-    if (ultima) o.unidade = ultima.unidade;
-    estado.ofertas.push(o);
-    sairDoExemplo();
-    salvar();
-    desenharOfertas();
-    desenharResultado();
-    $(`#loja-${o.id}`).focus();
+  // Foto que não carrega vira ilustração neutra
+  document.addEventListener(
+    'error',
+    (ev) => {
+      const img = ev.target;
+      if (img.tagName === 'IMG' && img.src !== fotoReserva) img.src = fotoReserva;
+    },
+    true
+  );
+
+  const painel = $('#painel-conta');
+  $('#botao-conta').addEventListener('click', () => {
+    painel.hidden = !painel.hidden;
+    $('#botao-conta').setAttribute('aria-expanded', String(!painel.hidden));
+  });
+  $('#fechar-conta').addEventListener('click', () => {
+    painel.hidden = true;
+    $('#botao-conta').setAttribute('aria-expanded', 'false');
   });
 
-  // Trocar a lista inteira pede confirmação na própria página
-  const painel = $('#confirmar');
-  let pendente = null;
-  const pedir = (texto, rotulo, acao) => {
-    if (estado.exemplo) return acao(); // o exemplo pode ser trocado sem perguntar
-    pendente = acao;
-    $('#confirmar-texto').textContent = texto;
-    $('#confirmar-sim').textContent = rotulo;
-    painel.hidden = false;
-    $('#confirmar-sim').focus();
-  };
-  $('#confirmar-nao').addEventListener('click', () => { painel.hidden = true; pendente = null; });
-  $('#confirmar-sim').addEventListener('click', () => { painel.hidden = true; pendente?.(); pendente = null; });
-
-  const redesenhar = () => { salvar(); desenharProduto(); desenharOfertas(); desenharResultado(); };
-  $('#limpar').addEventListener('click', () =>
-    pedir('Apagar o produto e todas as ofertas da lista?', 'Apagar e começar', () => {
-      estado = { exemplo: false, produto: { nome: '', minimo: '', maxUnidades: '6' }, ofertas: [ofertaVazia()] };
-      redesenhar();
-      $('#produto-nome').focus();
-    })
-  );
-  $('#ver-exemplo').addEventListener('click', () =>
-    pedir('Trocar sua lista pelo exemplo do sabonete? Suas ofertas serão apagadas.', 'Trocar pelo exemplo', () => {
-      estado = comIds(EXEMPLO);
-      redesenhar();
-    })
-  );
+  const inicial = prefs.ultimaBusca || (modoDemo() ? 'sabonete líquido Marca X' : '');
+  if (inicial) {
+    $('#q').value = inicial;
+    executarBusca(inicial);
+  }
 }
 
 iniciar();
