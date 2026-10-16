@@ -1,4 +1,4 @@
-// src/core.js
+// app/src/core.js
 var num = (v, padrao = 0) => {
   if (v === null || v === void 0 || v === "") return padrao;
   const n = typeof v === "number" ? v : Number(String(v).replace(/\./g, "").replace(",", "."));
@@ -327,7 +327,13 @@ function normalizarResultadoGoogle(r, i = 0) {
     preco,
     precoOriginal: typeof r.extracted_old_price === "number" ? r.extracted_old_price : null,
     foto: r.thumbnail || (Array.isArray(r.thumbnails) ? r.thumbnails[0] : null) || null,
+    lojaIcone: r.source_icon || null,
+    // Link direto para a loja só vem em alguns resultados; os outros abrem a página do Google
     link: r.link || r.product_link || null,
+    linkDireto: Boolean(r.link),
+    // Código para abrir a página do produto, com todas as lojas e links diretos (gasta 1 busca)
+    token: r.immersive_product_page_token || null,
+    variasLojas: Boolean(r.multiple_sources),
     condicao: r.second_hand_condition ? "used" : "new",
     freteGratis: frete.freteGratis,
     frete: frete.frete,
@@ -390,6 +396,71 @@ async function diagnosticarGoogle(env, fetcher = fetch) {
     }
   ];
 }
+var textos = (lista) => (Array.isArray(lista) ? lista : []).map((d) => typeof d === "string" ? d : d?.text || d?.title || "").map((t) => String(t).trim()).filter(Boolean);
+function normalizarLojaGoogle(s) {
+  const preco = typeof s.extracted_price === "number" ? s.extracted_price : lerNumero(s.price, null);
+  const detalhes = textos(s.details_and_offers);
+  let frete = typeof s.shipping_extracted === "number" ? s.shipping_extracted : null;
+  let freteGratis = frete === 0;
+  if (frete === null) {
+    const lido = lerFrete([s.shipping, ...detalhes].filter(Boolean).join(" \xB7 "));
+    frete = lido.frete;
+    freteGratis = lido.freteGratis;
+  }
+  const totalInformado = typeof s.extracted_total === "number" ? s.extracted_total : null;
+  return {
+    loja: s.name || "Loja",
+    icone: s.logo || null,
+    link: s.link || null,
+    titulo: s.title || null,
+    preco,
+    precoOriginal: typeof s.extracted_original_price === "number" ? s.extracted_original_price : null,
+    frete,
+    freteGratis,
+    total: totalInformado ?? (preco != null && frete != null ? Math.round((preco + frete) * 100) / 100 : null),
+    detalhes,
+    cupom: s.coupon || null,
+    desconto: s.discount || null,
+    parcelas: s.installments_description || null,
+    pagamento: textos(s.payment_methods),
+    avaliacao: typeof s.rating === "number" ? s.rating : null,
+    avaliacoes: typeof s.reviews === "number" ? s.reviews : null,
+    destaque: s.tag || null
+  };
+}
+async function buscarLojasDoProduto(token, { env, fetcher = fetch } = {}) {
+  if (!env.SERPAPI_KEY) throw new ErroDeFonte("O servidor ainda n\xE3o tem a chave da SerpApi (SERPAPI_KEY).", 503);
+  const url = `${SERPAPI}?${new URLSearchParams({
+    engine: "google_immersive_product",
+    page_token: token,
+    more_stores: "true",
+    gl: "br",
+    hl: "pt-br",
+    api_key: env.SERPAPI_KEY
+  })}`;
+  const r = await fetcher(url, { headers: { accept: "application/json" } });
+  const j = await r.json().catch(() => null);
+  if (!r.ok || j?.error) {
+    const motivo = j?.error || `HTTP ${r.status}`;
+    if (/run out of searches|plan|limit/i.test(motivo)) {
+      throw new ErroDeFonte("As buscas gratuitas do m\xEAs acabaram. Elas voltam no pr\xF3ximo ciclo da SerpApi.", 429);
+    }
+    throw new ErroDeFonte(`N\xE3o consegui abrir as lojas deste produto (${motivo}).`, 502);
+  }
+  const p = j.product_results || {};
+  const lojas = (p.stores || []).map(normalizarLojaGoogle).filter((l) => l.preco > 0).sort((a, b) => (a.total ?? a.preco) - (b.total ?? b.preco));
+  return {
+    produto: {
+      titulo: p.title || null,
+      marca: p.brand || null,
+      fotos: (p.thumbnails || []).filter((t) => typeof t === "string").slice(0, 6),
+      avaliacao: typeof p.rating === "number" ? p.rating : null,
+      avaliacoes: typeof p.reviews === "number" ? p.reviews : null,
+      sobre: typeof p.about_the_product?.description === "string" ? p.about_the_product.description.slice(0, 600) : null
+    },
+    lojas
+  };
+}
 
 // worker/src/index.js
 var fonteAtiva = (env) => env.SERPAPI_KEY ? "google" : env.ML_CLIENT_ID && env.ML_CLIENT_SECRET ? "mercadolivre" : null;
@@ -414,7 +485,7 @@ async function tratar(req, env, ctx = {}, fetcher = fetch) {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cabecalhos2 });
   if (req.method !== "GET") return json({ erro: "Use GET." }, 405, cabecalhos2);
   if (url.pathname === "/" || url.pathname === "") {
-    return json({ servico: "Minhas Compras", rotas: ["/api/saude", "/api/buscar?q=produto&cep=00000000", "/api/diagnostico"] }, 200, cabecalhos2);
+    return json({ servico: "Minhas Compras", rotas: ["/api/saude", "/api/buscar?q=produto", "/api/lojas?token=...", "/api/diagnostico"] }, 200, cabecalhos2);
   }
   if (url.pathname === "/api/conectar" || url.pathname === "/api/retorno") {
     const pagina = (titulo, texto, status = 200) => new Response(
@@ -446,6 +517,29 @@ async function tratar(req, env, ctx = {}, fetcher = fetch) {
       200,
       cabecalhos2
     );
+  }
+  if (url.pathname === "/api/lojas") {
+    const token = (url.searchParams.get("token") || "").trim();
+    if (token.length < 10 || token.length > 4e3) return json({ erro: "C\xF3digo do produto inv\xE1lido." }, 400, cabecalhos2);
+    const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const chaveCache = `lojas:${hash}`;
+    if (env.TOKENS) {
+      const salvo = await env.TOKENS.get(chaveCache, "json").catch(() => null);
+      if (salvo) return json({ ...salvo, doCache: true }, 200, cabecalhos2);
+    }
+    try {
+      const corpo = { ...await buscarLojasDoProduto(token, { env, fetcher }), verificadoEm: (/* @__PURE__ */ new Date()).toISOString() };
+      if (env.TOKENS) {
+        const horas = Math.max(0.1, Number(env.CACHE_HORAS) || 6);
+        const gravar = env.TOKENS.put(chaveCache, JSON.stringify(corpo), { expirationTtl: Math.max(60, Math.round(horas * 3600)) });
+        if (ctx.waitUntil) ctx.waitUntil(gravar);
+        else await gravar;
+      }
+      return json(corpo, 200, cabecalhos2);
+    } catch (e) {
+      const status = e instanceof ErroDeFonte ? e.status : 500;
+      return json({ erro: e instanceof ErroDeFonte ? e.message : "Erro inesperado no servidor." }, status, cabecalhos2);
+    }
   }
   if (url.pathname === "/api/buscar") {
     const q = (url.searchParams.get("q") || "").trim().replace(/\s+/g, " ").slice(0, 120);

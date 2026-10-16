@@ -1,6 +1,6 @@
 // Fonte de dados: API oficial do Mercado Livre.
 // Converte os anúncios para o formato comum do app (o mesmo que outras lojas vão usar).
-import { lerTitulo, lerNumero } from '../../src/core.js';
+import { lerTitulo, lerNumero } from '../../app/src/core.js';
 
 const API = 'https://api.mercadolibre.com';
 

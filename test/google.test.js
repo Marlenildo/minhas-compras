@@ -107,3 +107,48 @@ test('diagnóstico mostra as buscas restantes sem expor a chave', async () => {
   assert.equal(j.fontePrincipal, 'google');
   assert.equal(j.passos[0].buscasRestantes, 248);
 });
+
+test('resultado guarda ícone da loja e o código da página do produto', () => {
+  const n = normalizarResultadoGoogle({
+    title: 'Fone Bluetooth X', source: 'Magalu', source_icon: 'https://x/icone.png', extracted_price: 99,
+    product_link: 'https://www.google.com/shopping/product/1', immersive_product_page_token: 'TOKEN-PRODUTO-123', multiple_sources: true,
+  });
+  assert.equal(n.lojaIcone, 'https://x/icone.png');
+  assert.equal(n.token, 'TOKEN-PRODUTO-123');
+  assert.equal(n.variasLojas, true);
+  assert.equal(n.linkDireto, false);
+  assert.equal(n.conteudo, null); // fone não tem litro: o app usa só o preço
+});
+
+test('lojas de um produto: link direto, frete, total e ordem pelo total', async () => {
+  const kv = new KVFalso();
+  const env = { SERPAPI_KEY: 'CHAVE-SERP', TOKENS: kv };
+  const f = fetchFalso({
+    product_results: {
+      title: 'Fone Bluetooth X', brand: 'Marca X', rating: 4.6, reviews: 830, thumbnails: ['https://x/1.jpg'],
+      stores: [
+        { name: 'Loja A', logo: 'https://x/a.png', link: 'https://loja-a.com.br/fone', extracted_price: 120, shipping: 'Frete R$ 15,00', details_and_offers: ['Em estoque'] },
+        { name: 'Loja B', logo: 'https://x/b.png', link: 'https://loja-b.com.br/fone', extracted_price: 129.9, shipping_extracted: 0, extracted_total: 129.9, coupon: 'CUPOM10', installments_description: '10x R$ 12,99' },
+        { name: 'Sem preço', link: 'https://x' },
+      ],
+    },
+  });
+  const url = 'https://api.exemplo/api/lojas?token=TOKEN-PRODUTO-123';
+  const r = await tratar(new Request(url), env, {}, f);
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.deepEqual(j.lojas.map((l) => [l.loja, l.total]), [['Loja B', 129.9], ['Loja A', 135]]);
+  assert.equal(j.lojas[0].link, 'https://loja-b.com.br/fone');
+  assert.equal(j.lojas[0].freteGratis, true);
+  assert.equal(j.lojas[0].cupom, 'CUPOM10');
+  assert.equal(j.lojas[1].frete, 15);
+  assert.equal(j.produto.avaliacao, 4.6);
+  const pedido = new URL(f.chamadas[0]);
+  assert.equal(pedido.searchParams.get('engine'), 'google_immersive_product');
+  assert.equal(pedido.searchParams.get('page_token'), 'TOKEN-PRODUTO-123');
+
+  // A segunda vez vem do cache, sem gastar busca
+  const r2 = await tratar(new Request(url), env, {}, f);
+  assert.equal((await r2.json()).doCache, true);
+  assert.equal(f.chamadas.length, 1);
+});

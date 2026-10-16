@@ -1,92 +1,78 @@
 # Minhas Compras
 
-Busque um produto e veja onde cada **litro, quilo ou unidade** sai mais barato, com fotos, frete e descontos já somados.
+Busque qualquer produto e veja onde comprar mais barato: ofertas de várias lojas, com frete, promoções, avaliações e, quando dá, o preço por litro, quilo ou unidade.
 
 > Nome provisório. O nome definitivo do app ainda será escolhido.
 
-## Como funciona
+## O que o app faz
 
-1. Você busca um produto ("sabonete líquido refil") e, se quiser, informa o CEP.
-2. O servidor de busca consulta o Google Shopping e devolve as ofertas de várias lojas, com foto, preço, frete e link.
-3. O app lê o tamanho de cada oferta pelo título, calcula o preço por litro e testa levar de 1 até o máximo de unidades que você aceita.
-4. A melhor compra aparece em destaque, seguida de todas as ofertas da mais barata para a mais cara.
+- **Busca em várias lojas de uma vez** (Google Shopping): foto, ícone da loja, preço na loja, preço antigo e desconto, frete e avaliação.
+- **Preço claro**: o preço da loja aparece em destaque; o frete e o total com frete logo abaixo; o preço por litro, kg ou unidade só aparece como etiqueta extra quando o tamanho é conhecido.
+- **Destaques**: menor preço, menor total com frete, melhor preço por unidade e mais bem avaliado.
+- **Filtros**: lojas (com ícone, quantidade de ofertas e menor preço de cada uma), faixa de preço, frete grátis, em promoção, 4 estrelas ou mais, com preço por unidade.
+- **Ordenação**: relevância, menor preço, menor total com frete, menor preço por unidade, maior desconto, melhor avaliação.
+- **Comparar**: escolha até 4 ofertas e veja lado a lado, com o melhor valor de cada linha em verde.
+- **Onde comprar**: abre todas as lojas que vendem o produto, da menor para a maior total, com frete, cupom, parcelamento e **link direto para a loja**.
+- **Corrigir ou informar o tamanho** de uma oferta ("900 ml", "1 kg", "12 unidades") para ganhar o preço por unidade.
 
-Também dá para:
-
-- **corrigir o tamanho** de um anúncio, ou informar o tamanho quando o anúncio não traz;
-- **adicionar uma oferta de outra loja** à mão (supermercado do bairro, outro site);
-- filtrar por **frete grátis** e **loja oficial**, e ordenar por preço total.
-
-Sem o servidor ligado, o app roda em **modo demonstração**, com produtos e preços fictícios.
-
-### Regras do cálculo
-
-1. O desconto por quantidade vale sobre o valor dos produtos.
-2. O frete grátis por valor mínimo é conferido depois do desconto por quantidade.
-3. O desconto no Pix não vale sobre o frete.
-4. O frete é do pedido inteiro, não por unidade.
-5. Levar mais unidades só é sugerido se economizar pelo menos 1%.
+Sem o servidor, o app roda em **modo demonstração**, com dois exemplos (sabonete líquido e fone bluetooth) e preços fictícios.
 
 ## Estrutura
 
 ```
-index.html              página e estilos
-src/core.js             motor de cálculo (funções puras, testadas)
-src/app.js              tela: busca, resultado, filtros
-src/fontes.js           de onde vêm os produtos (servidor ou demonstração)
-src/demo.js             dados e ilustrações da demonstração
-src/config.js           endereço do servidor de busca
-worker/                 servidor de busca (Cloudflare Workers)
-scripts/build.mjs       junta tudo num arquivo só (dist/)
+app/index.html          página e estilos
+app/src/core.js         motor de cálculo (funções puras, testadas)
+app/src/app.js          tela: busca, filtros, destaques, comparação, onde comprar
+app/src/fontes.js       de onde vêm os produtos (servidor ou demonstração)
+app/src/demo.js         dados e ilustrações da demonstração
+app/src/config.js       endereço do servidor de busca
+app/assets/             logo
+worker/                 servidor de busca (Google Shopping e Mercado Livre)
+wrangler.toml           publicação no Cloudflare (app + servidor juntos)
+scripts/build.mjs       versão de arquivo único (dist/)
 test/                   testes do motor e do servidor
 ```
 
 ```bash
-npm test        # roda os testes
-npm run build   # gera dist/minhas-compras.html, que abre direto no navegador
+npm test                # testes
+npm run build           # dist/minhas-compras.html, versão de arquivo único
+npm run build:worker    # worker/pronto/worker.js, para colar no painel do Cloudflare
 ```
-
-Não há dependências para instalar no app. Basta ter o Node.js 18 ou mais novo.
 
 ## Fontes de preço
 
-O servidor (`worker/`) roda no Cloudflare Workers e guarda as chaves de acesso. A página nunca chama as lojas direto.
+O servidor (`worker/`) guarda as chaves de acesso; a página nunca chama as lojas direto.
 
-- **Google Shopping, pela [SerpApi](https://serpapi.com)** (fonte principal): uma busca traz ofertas de várias lojas, com foto, preço e frete quando o Google informa. Plano gratuito de 250 buscas por mês. Cada busca fica guardada por 6 horas (`CACHE_HORAS`), então buscas repetidas não gastam a cota.
-- **Mercado Livre (API oficial)**: o código está pronto, inclusive a conexão da conta do dono (`/api/conectar`), mas o Mercado Livre bloqueia a busca de anúncios e a do catálogo para apps como este ("At least one policy returned UNAUTHORIZED"). Fica como reserva.
+- **Google Shopping, pela [SerpApi](https://serpapi.com)** (fonte principal). Plano gratuito de 250 buscas por mês.
+  - `/api/buscar?q=...`: ofertas de várias lojas. 1 busca da cota.
+  - `/api/lojas?token=...`: todas as lojas de um produto, com link direto. 1 busca da cota, só quando a pessoa clica em "Ver onde comprar".
+  - Cada resposta fica guardada por 6 horas (`CACHE_HORAS`) no KV, então repetir não gasta cota.
+- **Mercado Livre (API oficial)**: código pronto, inclusive a conexão da conta do dono (`/api/conectar`), mas o Mercado Livre bloqueia a busca de anúncios e a do catálogo para apps como este ("At least one policy returned UNAUTHORIZED"). Fica como reserva.
 
-### Configuração no Cloudflare (pelo painel)
+`/api/diagnostico` mostra a fonte ativa e as buscas restantes, sem mostrar as chaves.
 
-1. Crie um Worker chamado `minhas-compras-api` e cole o conteúdo de `worker/pronto/worker.js` (gerado com `npm run build:worker`).
-2. Em *Settings → Variables and secrets*:
-   - `SERPAPI_KEY` (Secret): chave da SerpApi;
-   - `ORIGENS_PERMITIDAS` (Text): `*`, ou o endereço do app publicado;
-   - opcionais: `CACHE_HORAS`, `ML_CLIENT_ID`, `ML_CLIENT_SECRET`, `ADMIN_CHAVE`.
-3. Em *Bindings*, ligue um namespace KV com o nome `TOKENS` (cache das buscas e tokens).
-4. Confira em `/api/diagnostico`: mostra a fonte ativa e as buscas restantes, sem mostrar as chaves.
+## Hospedagem: tudo no Cloudflare
 
-### Publicar o app
+O app (`app/`) e o servidor (`worker/`) ficam no mesmo Worker, `minhas-compras-api` (veja `wrangler.toml`): o endereço principal abre o app e `/api/*` vai para o servidor. Com o repositório conectado ao Cloudflare, cada envio ao GitHub publica tudo sozinho.
 
-No GitHub: *Settings → Pages → Deploy from a branch → main / (root)*. O app fica em `https://marlenildo.github.io/minhas-compras/` e já aponta para o servidor (`src/config.js`).
+1. No `wrangler.toml`, troque `COLE_AQUI_O_ID_DO_KV` pelo ID do namespace KV `minhas-compras-tokens`.
+2. No Cloudflare: *Workers & Pages → minhas-compras-api → Settings → Build → Connect*, repositório `minhas-compras`, ramo `main`. Comando de build vazio; comando de deploy `npx wrangler deploy`.
+3. Segredos no painel (*Settings → Variables and secrets*): `SERPAPI_KEY` e, para o Mercado Livre, `ML_CLIENT_ID`, `ML_CLIENT_SECRET` e `ADMIN_CHAVE`.
+
+Sem a conexão com o GitHub, dá para publicar à mão com `npx wrangler deploy` na raiz do projeto.
 
 ## Contas
 
-Hoje o app funciona **sem conta**: CEP, ajustes e ofertas adicionadas ficam salvos só no aparelho (localStorage).
+Hoje o app funciona **sem conta**: as preferências ficam salvas só no aparelho.
 
-A conta será opcional. Ela serve para:
-
-- ver as listas em qualquer aparelho;
-- montar a lista do mês dos produtos que você sempre compra;
-- receber aviso quando o preço por litro cair.
-
-Plano técnico: login com Google ou link por e-mail (sem senha) usando Supabase, que guarda as listas num banco de dados com acesso só do próprio usuário. Ao criar a conta, o que já está salvo no aparelho é copiado para ela.
+A conta será opcional (login com Google ou link por e-mail, via Supabase) e servirá para salvar produtos em qualquer aparelho, montar a lista do mês e receber aviso quando o preço cair.
 
 ## Próximos passos
 
-1. Conferir os resultados reais do Google Shopping e ajustar a leitura de tamanhos.
-2. Perfil com assinaturas (Prime, Meli+) para aplicar frete e benefícios sozinho.
-3. Mais lojas por API oficial ou redes de afiliados (Amazon Creators API, Awin, Lomadee). Sem raspar sites.
-4. Contas opcionais, lista do mês e alertas de preço.
+1. Conferir os resultados reais e ajustar a leitura de tamanhos.
+2. Histórico de preço e alerta de queda.
+3. Contas opcionais e lista do mês.
+4. Mais fontes por API oficial ou afiliados (Amazon Creators API, Awin). Sem raspar sites.
 
 ## Princípio
 

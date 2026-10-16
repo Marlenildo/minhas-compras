@@ -1,0 +1,22 @@
+# App (pasta app/) e servidor de busca (worker/) no mesmo Worker do Cloudflare.
+# Com o repositório conectado ao Cloudflare (Workers → minhas-compras-api → Settings → Build),
+# cada envio ao GitHub publica tudo sozinho.
+name = "minhas-compras-api"
+main = "worker/src/index.js"
+compatibility_date = "2026-09-01"
+# Mantém as variáveis e segredos cadastrados no painel (SERPAPI_KEY, ML_CLIENT_ID...)
+keep_vars = true
+
+# Arquivos do app: o endereço principal abre app/index.html; /api/* vai para o servidor
+[assets]
+directory = "./app"
+
+[vars]
+ORIGENS_PERMITIDAS = "*"
+CACHE_HORAS = "6"
+
+# Armazenamento do cache e dos tokens. Troque pelo ID do namespace "minhas-compras-tokens"
+# (Cloudflare → Storage & Databases → Workers KV → copie o ID).
+[[kv_namespaces]]
+binding = "TOKENS"
+id = "COLE_AQUI_O_ID_DO_KV"

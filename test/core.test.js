@@ -9,7 +9,7 @@ import {
   melhorCompraDaOferta,
   compararOfertas,
   precoExibido,
-} from '../src/core.js';
+} from '../app/src/core.js';
 
 const perto = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} ≠ ${b}`);
 

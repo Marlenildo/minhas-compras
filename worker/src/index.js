@@ -3,7 +3,7 @@
 // GET /api/saude                                    → confere se o servidor está de pé
 // GET /api/diagnostico                              → testa cada fonte de preços
 import { buscarML, diagnosticarML, iniciarConexao, concluirConexao, ErroDeFonte } from './mercadolivre.js';
-import { buscarGoogle, diagnosticarGoogle } from './google.js';
+import { buscarGoogle, diagnosticarGoogle, buscarLojasDoProduto } from './google.js';
 
 /** Fonte usada nas buscas: Google Shopping quando há chave da SerpApi; senão, Mercado Livre. */
 const fonteAtiva = (env) => (env.SERPAPI_KEY ? 'google' : env.ML_CLIENT_ID && env.ML_CLIENT_SECRET ? 'mercadolivre' : null);
@@ -33,7 +33,7 @@ export async function tratar(req, env, ctx = {}, fetcher = fetch) {
   if (req.method !== 'GET') return json({ erro: 'Use GET.' }, 405, cabecalhos);
 
   if (url.pathname === '/' || url.pathname === '') {
-    return json({ servico: 'Minhas Compras', rotas: ['/api/saude', '/api/buscar?q=produto&cep=00000000', '/api/diagnostico'] }, 200, cabecalhos);
+    return json({ servico: 'Minhas Compras', rotas: ['/api/saude', '/api/buscar?q=produto', '/api/lojas?token=...', '/api/diagnostico'] }, 200, cabecalhos);
   }
 
   // Conexão da conta do dono ao Mercado Livre (feita uma vez)
@@ -71,6 +71,33 @@ export async function tratar(req, env, ctx = {}, fetcher = fetch) {
       200,
       cabecalhos
     );
+  }
+
+  // Todas as lojas de um produto, com link direto (Google Shopping)
+  if (url.pathname === '/api/lojas') {
+    const token = (url.searchParams.get('token') || '').trim();
+    if (token.length < 10 || token.length > 4000) return json({ erro: 'Código do produto inválido.' }, 400, cabecalhos);
+    const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)))]
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+    const chaveCache = `lojas:${hash}`;
+    if (env.TOKENS) {
+      const salvo = await env.TOKENS.get(chaveCache, 'json').catch(() => null);
+      if (salvo) return json({ ...salvo, doCache: true }, 200, cabecalhos);
+    }
+    try {
+      const corpo = { ...(await buscarLojasDoProduto(token, { env, fetcher })), verificadoEm: new Date().toISOString() };
+      if (env.TOKENS) {
+        const horas = Math.max(0.1, Number(env.CACHE_HORAS) || 6);
+        const gravar = env.TOKENS.put(chaveCache, JSON.stringify(corpo), { expirationTtl: Math.max(60, Math.round(horas * 3600)) });
+        if (ctx.waitUntil) ctx.waitUntil(gravar);
+        else await gravar;
+      }
+      return json(corpo, 200, cabecalhos);
+    } catch (e) {
+      const status = e instanceof ErroDeFonte ? e.status : 500;
+      return json({ erro: e instanceof ErroDeFonte ? e.message : 'Erro inesperado no servidor.' }, status, cabecalhos);
+    }
   }
 
   if (url.pathname === '/api/buscar') {
