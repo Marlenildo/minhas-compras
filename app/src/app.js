@@ -3,6 +3,10 @@ import { buscarProdutos, buscarLojas, modoDemo } from './fontes.js';
 import { fotoReserva } from './demo.js';
 import { eRelevante, parecenca, buscaParecida, LIMIAR_PARECIDO } from './relevancia.js';
 import { montarFacetas, passaNasFacetas } from './facetas.js';
+import {
+  FAVORITOS, garantirSalvos, salvarItem, estaSalvo, removerSalvo, tirarDaLista, alternarLista, criarLista, renomearLista,
+  apagarLista, itensDaLista, contarLista, totalDaLista, mudarQuantidade, registrarPrecosVistos, variacao,
+} from './salvos.js';
 
 // ---------------------------------------------------------------------------
 // Estado
@@ -19,6 +23,12 @@ const prefs = (() => {
   }
   return padrao;
 })();
+garantirSalvos(prefs);
+let listaAberta = FAVORITOS; // aba aberta em "Meus salvos"
+let editandoLista = null; // id da lista sendo renomeada
+let apagandoLista = null; // id da lista esperando confirmação para apagar
+let itemDasListas = null; // oferta aberta em "Salvar em lista"
+
 function salvar() {
   try {
     localStorage.setItem(CHAVE, JSON.stringify(prefs));
@@ -250,6 +260,24 @@ function formFrete(i) {
   </form>`;
 }
 
+const SVG_CORACAO = (cheio) =>
+  `<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5s-7.5-4.6-9.3-9.3C1.4 7.8 3.6 4.5 7 4.5c2 0 3.5 1.1 5 3 1.5-1.9 3-3 5-3 3.4 0 5.6 3.3 4.3 6.7-1.8 4.7-9.3 9.3-9.3 9.3z" fill="${cheio ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>`;
+
+function botaoCoracao(i) {
+  const salvo = estaSalvo(prefs, i.id);
+  return `<button type="button" class="coracao" data-acao="favoritar" data-id="${esc(i.id)}" aria-pressed="${salvo}" title="${salvo ? 'Tirar dos salvos' : 'Salvar nos favoritos'}" aria-label="${salvo ? 'Tirar dos salvos' : 'Salvar nos favoritos'}">${SVG_CORACAO(salvo)}</button>`;
+}
+
+function seloVariacao(i) {
+  const sv = prefs.salvos[i.id];
+  if (!sv) return '';
+  const d = Math.round((i.preco - sv.precoSalvo) * 100) / 100;
+  if (Math.abs(d) < 0.01) return '';
+  return d < 0
+    ? `<span class="variacao caiu">▼ ${brl(-d)} desde que você salvou</span>`
+    : `<span class="variacao subiu">▲ ${brl(d)} desde que você salvou</span>`;
+}
+
 function htmlCartao(i, c) {
   const selos = [];
   if (c.destaques.preco?.id === i.id) selos.push('<span class="selo verde">Menor preço</span>');
@@ -272,7 +300,8 @@ function htmlCartao(i, c) {
       </button>
     </div>
     <div class="cartao-corpo">
-      <div class="loja-linha">${avatarLoja(i.loja, i.lojaIcone)}<span class="loja-nome">${esc(i.loja)}</span>${i.fonte === 'manual' ? '<span class="mais">sua oferta</span>' : i.variasLojas ? '<span class="mais">+ lojas</span>' : ''}</div>
+      <div class="loja-linha">${avatarLoja(i.loja, i.lojaIcone)}<span class="loja-nome">${esc(i.loja)}</span>${i.fonte === 'manual' ? '<span class="mais">sua oferta</span>' : i.variasLojas ? '<span class="mais">+ lojas</span>' : ''}${botaoCoracao(i)}</div>
+      ${seloVariacao(i)}
       <h3 class="titulo" title="${esc(i.titulo)}">${esc(i.titulo)}</h3>
       ${estrelas(i.avaliacao, i.avaliacoes)}
       <div class="preco-bloco">
@@ -447,9 +476,10 @@ function desenhar() {
     ? `<span class="fora">${c.foraDoAssunto} fora do assunto escondida${c.foraDoAssunto === 1 ? '' : 's'} · <button type="button" class="link" data-acao="mostrar-todos">mostrar</button></span>`
     : '';
   const l = busca.local;
+  const cepFmt = prefs.cep ? `${prefs.cep.slice(0, 5)}-${prefs.cep.slice(5)}` : '';
   const regiao = l
-    ? `<span class="regiao">Frete estimado para ${esc(l.nivel === 'demo' ? 'o CEP informado' : `${l.cidade}${l.uf ? ` - ${l.uf}` : ''}`)}${l.nivel === 'estado' ? ' (pelo estado)' : ''}</span>`
-    : prefs.cep ? '' : '<span class="regiao">Coloque seu CEP na busca para ver o frete da sua região</span>';
+    ? `<span class="regiao">Frete estimado para ${esc(l.nivel === 'demo' ? `o CEP ${cepFmt}` : `${l.cidade}${l.uf ? ` - ${l.uf}` : ''}`)}${l.nivel === 'estado' ? ' (pelo estado)' : ''} · <button type="button" class="link mini" data-acao="editar-cep">trocar CEP</button></span>`
+    : `<span class="regiao"><button type="button" class="link mini" data-acao="editar-cep">${prefs.cep ? `CEP ${cepFmt} · trocar` : 'Coloque seu CEP para ver o frete da sua região'}</button></span>`;
   $('#status').innerHTML = `<strong>${n}</strong> oferta${n === 1 ? '' : 's'} para “${esc(busca.q)}”<span class="meta">${via ? ` · via ${esc(via)}` : ''}${hora ? ` · às ${hora}` : ''}</span>${regiao}${fora}`;
   $('#aviso-demo').hidden = !busca.aviso;
   $('#aviso-demo').textContent = busca.aviso;
@@ -665,6 +695,8 @@ function desenharDetalhe() {
         }
         <p class="det-oferta">Oferta encontrada: ${avatarLoja(i.loja, i.lojaIcone, 'mini')} ${esc(i.loja)} · <strong>${brl(i.preco)}</strong></p>
         <div class="det-acoes">
+          <button type="button" class="botao-sec salvar${estaSalvo(prefs, i.id) ? ' ativo' : ''}" data-acao="favoritar" data-id="${esc(i.id)}">${SVG_CORACAO(estaSalvo(prefs, i.id))}${estaSalvo(prefs, i.id) ? 'Salvo' : 'Salvar'}</button>
+          <button type="button" class="botao-sec" data-acao="escolher-listas" data-id="${esc(i.id)}">Salvar em lista…</button>
           <button type="button" class="botao-sec" data-acao="parecidos" data-id="${esc(i.id)}">Só parecidos com este</button>
           <button type="button" class="botao-sec" data-acao="buscar-parecidos" data-id="${esc(i.id)}" title="Faz uma busca nova com o nome deste produto">Buscar mais parecidos nas lojas</button>
         </div>
@@ -713,6 +745,7 @@ async function executarBusca(q) {
   desenhar();
   try {
     Object.assign(busca, { local: null }, await buscarProdutos(q, { cep: prefs.cep }), { carregando: false });
+    if (registrarPrecosVistos(prefs, busca.itens)) salvar();
   } catch (e) {
     Object.assign(busca, { itens: [], carregando: false, erro: e.message });
   }
@@ -732,7 +765,68 @@ function aoClicar(ev) {
     else filtros[k] = typeof filtros[k] === 'boolean' ? false : '';
     return desenhar();
   }
+  const salvoId = alvo.closest('.salvos li')?.dataset.id;
   switch (alvo.dataset.acao) {
+    case 'editar-cep': {
+      const caixa = $('#form-busca');
+      caixa.classList.add('expandida');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      const c = $('#cep');
+      c.focus();
+      c.select();
+      return;
+    }
+    case 'favoritar':
+      return favoritar(id);
+    case 'abrir-salvos':
+      return abrirSalvos();
+    case 'aba-lista':
+      listaAberta = alvo.dataset.lista;
+      editandoLista = apagandoLista = null;
+      return desenharSalvos();
+    case 'renomear-lista':
+      editandoLista = alvo.dataset.lista;
+      return desenharSalvos();
+    case 'apagar-lista':
+      apagandoLista = alvo.dataset.lista;
+      return desenharSalvos();
+    case 'apagar-lista-sim':
+      apagarLista(prefs, alvo.dataset.lista);
+      listaAberta = FAVORITOS;
+      apagandoLista = null;
+      salvar();
+      return redesenharTudo();
+    case 'cancelar-lista':
+      editandoLista = apagandoLista = null;
+      return desenharSalvos();
+    case 'qtd-mais':
+    case 'qtd-menos':
+      mudarQuantidade(prefs, salvoId, alvo.dataset.acao === 'qtd-mais' ? 1 : -1);
+      salvar();
+      return desenharSalvos();
+    case 'tirar-da-lista': {
+      const antes = JSON.parse(JSON.stringify(prefs.salvos[salvoId]));
+      tirarDaLista(prefs, salvoId, alvo.dataset.lista);
+      salvar();
+      redesenharTudo();
+      return avisar('Tirado da lista.', 'Desfazer', () => {
+        prefs.salvos[salvoId] = antes;
+        salvar();
+        redesenharTudo();
+      });
+    }
+    case 'buscar-salvo': {
+      const sv = prefs.salvos[salvoId];
+      if (!sv) return;
+      fecharDialogos();
+      const q = buscaParecida(sv.item.titulo);
+      $('#q').value = q;
+      return executarBusca(q);
+    }
+    case 'escolher-listas':
+      return abrirListasDoItem(salvoId || id);
+    case 'fechar-listas':
+      return $('#dlg-listas').close();
     case 'faceta': {
       if (alvo.getAttribute('aria-disabled') === 'true') return;
       const g = alvo.dataset.faceta;
@@ -826,6 +920,12 @@ function aoClicar(ev) {
 
 function aoMudar(ev) {
   const el = ev.target;
+  if (el.dataset.alternarLista) {
+    const item = ofertaParaSalvar(itemDasListas);
+    if (item) alternarLista(prefs, item, el.dataset.alternarLista);
+    salvar();
+    return redesenharTudo();
+  }
   if (el.dataset.filtroLoja !== undefined) {
     if (el.checked) filtros.lojas.add(el.dataset.filtroLoja);
     else filtros.lojas.delete(el.dataset.filtroLoja);
@@ -845,6 +945,24 @@ function erroNoForm(form, texto) {
 
 function aoEnviar(ev) {
   const form = ev.target;
+  if (form.dataset.form === 'nova-lista' || form.dataset.form === 'nova-lista-item') {
+    ev.preventDefault();
+    const id = criarLista(prefs, form.nome.value);
+    if (!id) return;
+    if (form.dataset.form === 'nova-lista-item') {
+      const item = ofertaParaSalvar(itemDasListas);
+      if (item) salvarItem(prefs, item, id);
+    } else listaAberta = id;
+    salvar();
+    return redesenharTudo();
+  }
+  if (form.dataset.form === 'renomear-lista') {
+    ev.preventDefault();
+    renomearLista(prefs, form.dataset.lista, form.nome.value);
+    editandoLista = null;
+    salvar();
+    return redesenharTudo();
+  }
   if (form.dataset.form === 'frete') {
     ev.preventDefault();
     const txt = form.frete.value.trim();
@@ -918,12 +1036,161 @@ function lerUnidades(txt) {
 }
 
 let timerAviso;
-function avisar(texto) {
+function avisar(texto, rotulo, acao) {
   const t = $('#aviso');
-  t.textContent = texto;
+  // Com uma janela aberta, o aviso vai para dentro dela (senão ficaria por trás e não daria para tocar)
+  const janelas = [...document.querySelectorAll('dialog[open]')];
+  const destino = janelas[janelas.length - 1] || document.body;
+  if (t.parentElement !== destino) destino.appendChild(t);
+  t.innerHTML = `<span>${esc(texto)}</span>${rotulo ? `<button type="button">${esc(rotulo)}</button>` : ''}`;
+  if (rotulo) t.querySelector('button').onclick = () => {
+    t.hidden = true;
+    acao();
+  };
   t.hidden = false;
   clearTimeout(timerAviso);
-  timerAviso = setTimeout(() => (t.hidden = true), 3500);
+  timerAviso = setTimeout(() => (t.hidden = true), rotulo ? 6000 : 3500);
+}
+
+// ---------------------------------------------------------------------------
+// Meus salvos (favoritos e listas, no aparelho)
+// ---------------------------------------------------------------------------
+
+function ofertaParaSalvar(id) {
+  return itemPorId(id) || prefs.salvos[id]?.item || null;
+}
+
+function atualizarContadorSalvos() {
+  const n = Object.keys(prefs.salvos).length;
+  $('#botao-salvos .contador').textContent = n;
+  $('#botao-salvos .contador').hidden = !n;
+}
+
+function favoritar(id) {
+  if (estaSalvo(prefs, id)) {
+    const registro = removerSalvo(prefs, id);
+    salvar();
+    redesenharTudo();
+    avisar('Tirado dos salvos.', 'Desfazer', () => {
+      prefs.salvos[id] = registro;
+      salvar();
+      redesenharTudo();
+    });
+    return;
+  }
+  const item = ofertaParaSalvar(id);
+  if (!item) return;
+  salvarItem(prefs, item, FAVORITOS);
+  salvar();
+  redesenharTudo();
+  avisar('Salvo nos favoritos.', 'Pôr em outra lista', () => abrirListasDoItem(id));
+}
+
+function redesenharTudo() {
+  atualizarContadorSalvos();
+  if (busca.q && !busca.carregando) desenhar();
+  if (detalhe) desenharDetalhe();
+  if ($('#dlg-salvos').open) desenharSalvos();
+  if ($('#dlg-listas').open) desenharListasDoItem();
+}
+
+function abrirSalvos(lista) {
+  if (lista) listaAberta = lista;
+  if (!prefs.listas.some((l) => l.id === listaAberta)) listaAberta = FAVORITOS;
+  editandoLista = null;
+  apagandoLista = null;
+  desenharSalvos();
+  abrirDialogo('#dlg-salvos');
+}
+
+function desenharSalvos() {
+  const lista = prefs.listas.find((l) => l.id === listaAberta) || prefs.listas[0];
+  const itens = itensDaLista(prefs, lista.id);
+  const abas = prefs.listas
+    .map(
+      (l) => `<button type="button" class="aba${l.id === lista.id ? ' ativa' : ''}" data-acao="aba-lista" data-lista="${esc(l.id)}" aria-pressed="${l.id === lista.id}">
+        ${l.id === FAVORITOS ? SVG_CORACAO(true) : ''}${esc(l.nome)}<span class="n">${contarLista(prefs, l.id)}</span></button>`
+    )
+    .join('');
+  const cabecaLista =
+    editandoLista === lista.id
+      ? `<form class="form-lista" data-form="renomear-lista" data-lista="${esc(lista.id)}">
+          <label class="sr" for="nome-lista">Nome da lista</label>
+          <input id="nome-lista" name="nome" value="${esc(lista.nome)}" maxlength="40" autocomplete="off">
+          <button type="submit" class="botao">Salvar</button>
+          <button type="button" class="link" data-acao="cancelar-lista">Cancelar</button></form>`
+      : apagandoLista === lista.id
+        ? `<div class="confirma"><span>Apagar a lista “${esc(lista.nome)}”? Os itens que só estão nela deixam de ficar salvos.</span>
+            <button type="button" class="botao perigo" data-acao="apagar-lista-sim" data-lista="${esc(lista.id)}">Apagar</button>
+            <button type="button" class="link" data-acao="cancelar-lista">Cancelar</button></div>`
+        : `<div class="lista-cabeca">
+            <div><h3>${esc(lista.nome)}</h3><span class="nd">${itens.length} ${itens.length === 1 ? 'item' : 'itens'}${itens.length ? ` · total ${brl(totalDaLista(prefs, lista.id))}` : ''}</span></div>
+            ${lista.id === FAVORITOS ? '' : `<div class="lista-acoes"><button type="button" class="link" data-acao="renomear-lista" data-lista="${esc(lista.id)}">Renomear</button>
+              <button type="button" class="link perigo" data-acao="apagar-lista" data-lista="${esc(lista.id)}">Apagar</button></div>`}
+          </div>`;
+
+  const linhas = itens.length
+    ? `<ul class="salvos">${itens
+        .map((sv) => {
+          const i = sv.item;
+          const d = variacao(sv);
+          const quando = new Date(sv.salvoEm).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+          const link = linkSeguro(i.link);
+          return `<li data-id="${esc(i.id)}">
+            <img class="sv-foto" src="${esc(i.foto || fotoReserva)}" alt="" loading="lazy" referrerpolicy="no-referrer">
+            <div class="sv-info">
+              <span class="sv-loja">${avatarLoja(i.loja, i.lojaIcone, 'mini')}${esc(i.loja)}</span>
+              <span class="sv-titulo">${esc(i.titulo)}</span>
+              <span class="sv-precos"><strong>${brl(sv.ultimoPreco ?? sv.precoSalvo)}</strong>
+                ${Math.abs(d) >= 0.01 ? `<span class="variacao ${d < 0 ? 'caiu' : 'subiu'}">${d < 0 ? '▼' : '▲'} ${brl(Math.abs(d))}</span>` : ''}
+                <span class="nd">salvo por ${brl(sv.precoSalvo)} em ${esc(quando)}</span></span>
+              <div class="sv-acoes">
+                <div class="qtd" role="group" aria-label="Quantidade">
+                  <button type="button" data-acao="qtd-menos" aria-label="Diminuir">−</button><span>${sv.qtd || 1}</span><button type="button" data-acao="qtd-mais" aria-label="Aumentar">+</button>
+                </div>
+                <button type="button" class="link mini" data-acao="buscar-salvo">Ver preços de hoje</button>
+                ${link ? `<a class="link mini" href="${esc(link)}" target="_blank" rel="noopener noreferrer">Ir à loja ↗</a>` : ''}
+                <button type="button" class="link mini" data-acao="escolher-listas">Listas</button>
+                <button type="button" class="link mini perigo" data-acao="tirar-da-lista" data-lista="${esc(lista.id)}">Tirar</button>
+              </div>
+            </div>
+          </li>`;
+        })
+        .join('')}</ul>`
+    : `<div class="vazio-salvos">${SVG_CORACAO(false)}<p>${lista.id === FAVORITOS ? 'Toque no coração de um produto para salvar aqui.' : 'Abra um produto e use “Salvar em lista…” para trazer para cá.'}</p></div>`;
+
+  $('#dlg-salvos').innerHTML = `<div class="dlg-cabeca"><h2>Meus salvos</h2><button type="button" class="fechar" data-acao="fechar-dialogo" aria-label="Fechar">×</button></div>
+    <div class="abas">${abas}
+      <form class="nova-lista" data-form="nova-lista"><label class="sr" for="nova-lista">Nova lista</label>
+        <input id="nova-lista" name="nome" placeholder="+ Nova lista" maxlength="40" autocomplete="off"></form>
+    </div>
+    <div class="salvos-corpo">${cabecaLista}${linhas}</div>
+    <p class="nota-tabela">Seus salvos ficam guardados neste aparelho. Com a conta (em breve), eles vão aparecer em qualquer aparelho.</p>`;
+  if (editandoLista) $('#nome-lista')?.select();
+}
+
+function abrirListasDoItem(id) {
+  itemDasListas = id;
+  desenharListasDoItem();
+  abrirDialogo('#dlg-listas');
+}
+
+function desenharListasDoItem() {
+  const item = ofertaParaSalvar(itemDasListas);
+  if (!item) return;
+  const sv = prefs.salvos[item.id];
+  $('#dlg-listas').innerHTML = `<div class="dlg-cabeca"><h2>Salvar em lista</h2><button type="button" class="fechar" data-acao="fechar-listas" aria-label="Fechar">×</button></div>
+    <p class="dl-produto">${esc(item.titulo)}</p>
+    <div class="dl-listas">${prefs.listas
+      .map(
+        (l) => `<label class="dl-opcao"><input type="checkbox" data-alternar-lista="${esc(l.id)}" ${sv?.listas.includes(l.id) ? 'checked' : ''}>
+          <span>${esc(l.nome)}</span><span class="nd">${contarLista(prefs, l.id)}</span></label>`
+      )
+      .join('')}</div>
+    <form class="form-lista" data-form="nova-lista-item"><label class="sr" for="nova-lista-item">Nome da nova lista</label>
+      <input id="nova-lista-item" name="nome" placeholder="Nova lista, ex.: Compras do mês" maxlength="40" autocomplete="off">
+      <button type="submit" class="botao">Criar e salvar</button></form>
+    <div class="dl-rodape"><button type="button" class="botao-sec" data-acao="fechar-listas">Pronto</button></div>`;
 }
 
 function iniciar() {
@@ -982,7 +1249,9 @@ function iniciar() {
   document.addEventListener('input', (ev) => ev.target.dataset?.filtroPreco && aoMudar(ev));
   document.addEventListener('submit', aoEnviar);
   for (const d of document.querySelectorAll('dialog')) {
-    d.addEventListener('close', () => (detalhe = d.id === 'dlg-detalhe' ? null : detalhe));
+    d.addEventListener('close', () => {
+      if (d.id === 'dlg-detalhe') detalhe = null;
+    });
     d.addEventListener('click', (ev) => ev.target === d && fecharDialogos()); // clique fora fecha
   }
   document.addEventListener('keydown', (ev) => ev.key === 'Escape' && document.body.classList.remove('filtros-abertos'));
@@ -999,6 +1268,7 @@ function iniciar() {
     true
   );
 
+  atualizarContadorSalvos();
   const painel = $('#painel-conta');
   $('#botao-conta').addEventListener('click', () => {
     painel.hidden = !painel.hidden;

@@ -207,8 +207,8 @@ body.buscou #sugestoes { display: none; }
 .cartao { background: var(--surface); border: 1px solid var(--line); border-radius: var(--raio); overflow: hidden; display: flex; flex-direction: column; min-width: 0; transition: box-shadow 0.15s, border-color 0.15s; }
 .cartao:hover { box-shadow: var(--shadow); }
 .cartao.vencedor { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.cartao-foto { position: relative; background: var(--photo); aspect-ratio: 1; display: grid; place-items: center; padding: 14px; max-width: 100%; }
-.cartao-foto .foto { width: 100%; height: 100%; object-fit: contain; }
+.cartao-foto { position: relative; background: var(--photo); aspect-ratio: 1 / 1; width: 100%; max-width: 100%; overflow: hidden; }
+.cartao-foto .foto { position: absolute; inset: 8%; width: 84%; height: 84%; object-fit: contain; object-position: center; display: block; }
 .selos { position: absolute; left: 10px; bottom: 10px; right: 10px; display: grid; gap: 4px; justify-items: start; }
 .selo { font-size: 11px; font-weight: 800; letter-spacing: 0.02em; padding: 3px 8px; border-radius: 7px; white-space: nowrap; }
 .selo.verde { background: #0c6a4c; color: #fff; }
@@ -291,7 +291,7 @@ dialog::backdrop { background: rgb(8 14 11 / 0.55); }
 .fechar, .fechar-sheet { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface-2); font-size: 20px; line-height: 1; }
 .det-produto { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 16px; padding: 16px 18px; }
 @media (max-width: 480px) { .det-produto { grid-template-columns: 96px minmax(0, 1fr); gap: 12px; } }
-.det-foto { width: 100%; aspect-ratio: 1; object-fit: contain; background: var(--photo); border-radius: 14px; border: 1px solid var(--line); }
+.det-foto { width: 100%; aspect-ratio: 1 / 1; object-fit: contain; background: var(--photo); border-radius: 14px; border: 1px solid var(--line); padding: 6px; display: block; }
 .det-info { display: grid; gap: 6px; align-content: start; min-width: 0; }
 .det-info h3 { font-size: 16.5px; font-weight: 700; line-height: 1.35; }
 .det-tamanho, .det-oferta { margin: 0; font-size: 13.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -420,6 +420,73 @@ dialog::backdrop { background: rgb(8 14 11 / 0.55); }
 .faixa-rapida::-webkit-scrollbar { display: none; }
 .fr-nome { font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-right: 4px; white-space: nowrap; }
 @media (max-width: 560px) { .faixa-rapida { margin-inline: -16px; padding-inline: 16px; } }
+/* Topo: salvos */
+.topo-acoes { display: flex; gap: 8px; align-items: center; }
+.botao-salvos { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 6px 12px; font-size: 13.5px; font-weight: 700; color: var(--ink); }
+.botao-salvos svg { color: #e11d48; }
+.botao-salvos .contador { margin-left: 0; }
+@media (max-width: 420px) { .rotulo-salvos, .rotulo-conta { display: none; } .botao-conta { padding: 6px; } }
+
+/* Coração e variação de preço */
+.coracao { margin-left: auto; flex: none; width: 34px; height: 34px; margin-block: -6px; margin-right: -6px; border: 0; background: none; color: var(--muted); display: grid; place-items: center; border-radius: 50%; }
+.coracao:hover { color: #e11d48; background: var(--surface-2); }
+.coracao[aria-pressed="true"] { color: #e11d48; }
+@media (prefers-reduced-motion: no-preference) { .coracao[aria-pressed="true"] svg { animation: pulso 0.3s ease-out; } @keyframes pulso { 50% { transform: scale(1.25); } } }
+.variacao { justify-self: start; font-size: 12px; font-weight: 800; padding: 2px 8px; border-radius: 6px; }
+.variacao.caiu { background: var(--good-bg); color: var(--good); }
+.variacao.subiu { background: var(--off-bg); color: var(--off); }
+.det-acoes .salvar svg { color: #e11d48; }
+.det-acoes .salvar.ativo { border-color: #e11d48; }
+
+/* Meus salvos */
+.abas { display: flex; gap: 6px; overflow-x: auto; padding: 12px 18px 4px; scrollbar-width: none; align-items: center; }
+.abas::-webkit-scrollbar { display: none; }
+.aba { flex: none; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 6px 12px; font-size: 13.5px; font-weight: 700; white-space: nowrap; }
+.aba svg { width: 14px; height: 14px; color: #e11d48; }
+.aba .n { font-size: 11.5px; color: var(--muted); }
+.aba.ativa { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.aba.ativa .n { color: inherit; opacity: 0.7; }
+.nova-lista input { width: 140px; border: 1px dashed var(--line); background: transparent; border-radius: 999px; padding: 6px 12px; font-size: 13.5px; }
+.nova-lista input:focus { border-style: solid; border-color: var(--accent); outline: none; width: 180px; }
+.salvos-corpo { padding: 8px 18px 0; display: grid; gap: 10px; }
+.lista-cabeca { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.lista-cabeca h3 { font-family: var(--font-display); font-size: 20px; font-stretch: 90%; }
+.lista-acoes { display: flex; gap: 12px; }
+.link.perigo { color: var(--danger); }
+.botao.perigo { background: var(--danger); color: #fff; }
+.form-lista { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.form-lista input { flex: 1 1 180px; min-width: 0; border: 1px solid var(--line); background: var(--surface-2); border-radius: 10px; padding: 8px 10px; font-size: 14px; color: var(--ink); }
+.form-lista input:focus { border-color: var(--accent); outline: none; }
+.confirma { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; background: var(--warn-bg); color: var(--warn); padding: 10px 12px; border-radius: 12px; font-size: 14px; }
+.confirma span { flex: 1 1 220px; }
+.salvos { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.salvos li { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 12px; border: 1px solid var(--line); border-radius: 14px; padding: 10px; }
+.sv-foto { width: 76px; height: 76px; object-fit: contain; background: var(--photo); border-radius: 10px; display: block; padding: 4px; }
+.sv-info { display: grid; gap: 3px; min-width: 0; }
+.sv-loja { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 800; }
+.sv-titulo { font-size: 14px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sv-precos { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.sv-precos strong { font-size: 16px; }
+.sv-acoes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 4px; }
+.qtd { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.qtd button { border: 0; background: var(--surface-2); width: 30px; height: 28px; font-size: 16px; font-weight: 700; }
+.qtd span { min-width: 28px; text-align: center; font-weight: 800; font-size: 14px; font-variant-numeric: tabular-nums; }
+.vazio-salvos { display: grid; justify-items: center; gap: 6px; padding: 28px 12px; color: var(--muted); text-align: center; }
+.vazio-salvos svg { width: 34px; height: 34px; color: #e11d48; }
+.vazio-salvos p { margin: 0; max-width: 34ch; }
+dialog.pequeno { width: min(420px, calc(100vw - 32px)); }
+@media (max-width: 640px) { dialog.pequeno { width: 100vw; } }
+.dl-produto { margin: 12px 18px 4px; font-size: 14px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.dl-listas { display: grid; padding: 4px 12px; }
+.dl-opcao { display: flex; align-items: center; gap: 10px; padding: 10px 6px; border-radius: 10px; font-weight: 700; cursor: pointer; }
+.dl-opcao:hover { background: var(--surface-2); }
+.dl-opcao input { width: 18px; height: 18px; accent-color: var(--accent); margin: 0; }
+.dl-opcao .nd { margin-left: auto; font-size: 12.5px; }
+dialog .form-lista { padding: 6px 18px; }
+.dl-rodape { display: flex; justify-content: flex-end; padding: 10px 18px 18px; }
+.aviso { display: flex; align-items: center; gap: 12px; }
+.aviso button { border: 0; background: var(--tag); color: var(--tag-ink); border-radius: 999px; padding: 4px 12px; font-weight: 800; font-size: 13px; white-space: nowrap; }
+
 .rodape { border-top: 1px solid var(--line); padding-block: 18px 28px; color: var(--muted); font-size: 13px; }
 </style>
 </head>
@@ -430,13 +497,19 @@ dialog::backdrop { background: rgb(8 14 11 / 0.55); }
       <svg width="30" height="30" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="112" fill="#0c6a4c"/><g transform="translate(287 249) rotate(-45)"><path d="M-150 -96 a24 24 0 0 1 24 -24 h196 a24 24 0 0 1 17 7 l80 80 a24 24 0 0 1 0 34 l-80 80 a24 24 0 0 1 -17 7 h-196 a24 24 0 0 1 -24 -24 z" fill="#ffd84a"/><circle cx="86" cy="0" r="18" fill="#0c6a4c"/><path d="M-92 4 l36 36 l78 -78" fill="none" stroke="#1c1804" stroke-width="30" stroke-linecap="round" stroke-linejoin="round" transform="rotate(45 -35 0)"/></g></svg>
       Minhas Compras
     </div>
+    <div class="topo-acoes">
+    <button type="button" class="botao-salvos" id="botao-salvos" data-acao="abrir-salvos">
+      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5s-7.5-4.6-9.3-9.3C1.4 7.8 3.6 4.5 7 4.5c2 0 3.5 1.1 5 3 1.5-1.9 3-3 5-3 3.4 0 5.6 3.3 4.3 6.7-1.8 4.7-9.3 9.3-9.3 9.3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+      <span class="rotulo-salvos">Salvos</span><span class="contador" hidden>0</span>
+    </button>
     <button type="button" class="botao-conta" id="botao-conta" aria-expanded="false" aria-controls="painel-conta">
       <span class="bolinha" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="5.5" r="3" fill="currentColor"/><path d="M2 15c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z" fill="currentColor"/></svg></span>
-      Sem conta
+      <span class="rotulo-conta">Sem conta</span>
     </button>
+    </div>
     <div class="painel-conta" id="painel-conta" hidden>
       <h2>Você está usando sem conta</h2>
-      <p>Funciona completo assim. Suas preferências ficam salvas só neste aparelho.</p>
+      <p>Funciona completo assim. Seus favoritos, listas e preferências ficam salvos só neste aparelho.</p>
       <span class="em-breve">Em breve</span>
       <p>Com uma conta (entrar com Google ou e-mail) você vai poder:</p>
       <ul>
@@ -514,6 +587,8 @@ dialog::backdrop { background: rgb(8 14 11 / 0.55); }
 <div class="bandeja" id="bandeja" hidden></div>
 <dialog id="dlg-detalhe" aria-label="Onde comprar"></dialog>
 <dialog id="dlg-comparar" aria-label="Comparar ofertas"></dialog>
+<dialog id="dlg-salvos" aria-label="Meus salvos"></dialog>
+<dialog id="dlg-listas" aria-label="Salvar em lista" class="pequeno"></dialog>
 <div class="aviso" id="aviso" hidden role="status"></div>
 
 <footer class="rodape">

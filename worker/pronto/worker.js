@@ -335,7 +335,8 @@ function normalizarResultadoGoogle(r, i = 0) {
     titulo: r.title,
     preco,
     precoOriginal: typeof r.extracted_old_price === "number" ? r.extracted_old_price : null,
-    foto: r.thumbnail || (Array.isArray(r.thumbnails) ? r.thumbnails[0] : null) || null,
+    // Prefere a foto maior que o Google oferece; a miniatura fica de reserva
+    foto: Array.isArray(r.serpapi_thumbnails) && r.serpapi_thumbnails[0] || Array.isArray(r.thumbnails) && r.thumbnails[0] || r.thumbnail || null,
     lojaIcone: r.source_icon || null,
     // Link direto para a loja só vem em alguns resultados; os outros abrem a página do Google
     link: r.link || r.product_link || null,
