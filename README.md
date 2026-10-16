@@ -58,6 +58,7 @@ O app (`app/`) e o servidor (`worker/`) ficam no mesmo Worker, `minhas-compras-a
 1. No `wrangler.toml`, troque `COLE_AQUI_O_ID_DO_KV` pelo ID do namespace KV `minhas-compras-tokens`.
 2. No Cloudflare: *Workers & Pages → minhas-compras-api → Settings → Build → Connect*, repositório `minhas-compras`, ramo `main`. Comando de build vazio; comando de deploy `npx wrangler deploy`.
 3. Segredos no painel (*Settings → Variables and secrets*): `SERPAPI_KEY` e, para o Mercado Livre, `ML_CLIENT_ID`, `ML_CLIENT_SECRET` e `ADMIN_CHAVE`.
+4. Endereço próprio: *minhas-compras-api → Settings → Domains & Routes → Add → Custom domain* → `minhas-compras.marlenildo.online` (o domínio precisa estar com o DNS na Cloudflare). O app abre direto na raiz do endereço, sem `/app`.
 
 Sem a conexão com o GitHub, dá para publicar à mão com `npx wrangler deploy` na raiz do projeto.
 
