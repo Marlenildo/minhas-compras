@@ -1,7 +1,7 @@
 // Servidor de busca do Minhas Compras (Cloudflare Worker).
 // GET /api/buscar?q=sabonete+liquido&cep=58397000  → anúncios no formato comum
 // GET /api/saude                                    → confere se o servidor está de pé
-import { buscarML, ErroDeFonte } from './mercadolivre.js';
+import { buscarML, diagnosticarML, ErroDeFonte } from './mercadolivre.js';
 
 const CACHE_SEGUNDOS = 600;
 
@@ -28,6 +28,14 @@ export async function tratar(req, env, ctx = {}, fetcher = fetch) {
   const cabecalhos = cors(env, req);
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cabecalhos });
   if (req.method !== 'GET') return json({ erro: 'Use GET.' }, 405, cabecalhos);
+
+  if (url.pathname === '/' || url.pathname === '') {
+    return json({ servico: 'Minhas Compras', rotas: ['/api/saude', '/api/buscar?q=produto&cep=00000000', '/api/diagnostico'] }, 200, cabecalhos);
+  }
+
+  if (url.pathname === '/api/diagnostico') {
+    return json({ passos: await diagnosticarML(env, fetcher) }, 200, cabecalhos);
+  }
 
   if (url.pathname === '/api/saude') {
     return json({ ok: true, mercadolivre: Boolean(env.ML_CLIENT_ID && env.ML_CLIENT_SECRET) }, 200, cabecalhos);

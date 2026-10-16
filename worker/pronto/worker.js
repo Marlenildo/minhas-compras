@@ -142,34 +142,117 @@ var ErroDeFonte = class extends Error {
     this.status = status;
   }
 };
+var cabecalhos = (token) => ({ authorization: `Bearer ${token}`, accept: "application/json" });
+async function chamar(caminho, token, fetcher) {
+  const r = await fetcher(`${API}${caminho}`, { headers: cabecalhos(token) });
+  const json2 = await r.json().catch(() => null);
+  return { status: r.status, ok: r.ok, json: json2 };
+}
+var mensagemML = (j) => j && (j.message || j.error) || "";
 async function buscarML(q, { env, cep, limite = 30, fetcher = fetch } = {}) {
   const token = await obterToken(env, fetcher);
-  const url = `${API}/sites/MLB/search?${new URLSearchParams({ q, limit: String(Math.min(limite, 50)), condition: "new" })}`;
-  const r = await fetcher(url, { headers: { authorization: `Bearer ${token}`, accept: "application/json" } });
-  if (r.status === 401) limparTokenEmCache();
-  if (!r.ok) throw new ErroDeFonte(`A busca do Mercado Livre falhou (HTTP ${r.status}).`, 502);
-  const j = await r.json();
-  const itens = (j.results || []).filter((i) => i.condition !== "used").map(normalizarItemML);
-  const cepLimpo = String(cep || "").replace(/\D/g, "");
-  if (cepLimpo.length === 8) {
-    const semFrete = itens.filter((i) => !i.freteGratis).slice(0, 12);
-    await Promise.all(
-      semFrete.map(async (i) => {
-        try {
-          const id = i.id.slice(3);
-          const rf = await fetcher(`${API}/items/${id}/shipping_options?zip_code=${cepLimpo}`, {
-            headers: { authorization: `Bearer ${token}`, accept: "application/json" }
-          });
-          if (!rf.ok) return;
-          const jf = await rf.json();
-          const custos = (jf.options || []).map((o) => o.cost).filter((c) => typeof c === "number");
-          if (custos.length) i.frete = Math.min(...custos);
-        } catch (_) {
-        }
-      })
+  const anuncios = await chamar(
+    `/sites/MLB/search?${new URLSearchParams({ q, limit: String(Math.min(limite, 50)), condition: "new" })}`,
+    token,
+    fetcher
+  );
+  if (anuncios.status === 401) limparTokenEmCache();
+  let itens;
+  if (anuncios.ok) {
+    itens = (anuncios.json?.results || []).filter((i) => i.condition !== "used").map(normalizarItemML);
+  } else if (anuncios.status === 403 || anuncios.status === 401) {
+    itens = await buscarCatalogo(q, { token, fetcher });
+  } else {
+    throw new ErroDeFonte(`A busca do Mercado Livre falhou (HTTP ${anuncios.status}).`, 502);
+  }
+  await calcularFretes(itens, cep, { token, fetcher });
+  return itens;
+}
+async function buscarCatalogo(q, { token, fetcher = fetch, maxProdutos = 15 } = {}) {
+  const busca = await chamar(
+    `/products/search?${new URLSearchParams({ status: "active", site_id: "MLB", q, limit: String(maxProdutos) })}`,
+    token,
+    fetcher
+  );
+  if (!busca.ok) {
+    throw new ErroDeFonte(
+      `O Mercado Livre bloqueou a busca de an\xFAncios e a do cat\xE1logo (HTTP ${busca.status}${mensagemML(busca.json) ? `: ${mensagemML(busca.json)}` : ""}).`,
+      502
     );
   }
-  return itens;
+  const produtos = (busca.json?.results || []).slice(0, maxProdutos);
+  const grupos = await Promise.all(
+    produtos.map(async (p) => {
+      const r = await chamar(`/products/${p.id}/items?limit=20`, token, fetcher).catch(() => null);
+      const ofertas = (r?.ok ? r.json?.results || [] : []).filter((o) => o.condition !== "used" && typeof o.price === "number");
+      if (!ofertas.length) return [];
+      ofertas.sort((a, b) => a.price - b.price);
+      const escolhidas = [ofertas[0]];
+      const gratis = ofertas.find((o) => o.shipping?.free_shipping);
+      if (gratis && gratis !== ofertas[0]) escolhidas.push(gratis);
+      return escolhidas.map((o) => normalizarOfertaCatalogo(p, o));
+    })
+  );
+  return grupos.flat();
+}
+function normalizarOfertaCatalogo(produto, oferta) {
+  const n = normalizarItemML({
+    id: oferta.item_id,
+    title: produto.name,
+    price: oferta.price,
+    original_price: oferta.original_price,
+    condition: oferta.condition,
+    thumbnail: produto.pictures?.[0]?.url || produto.pictures?.[0]?.secure_url || null,
+    permalink: `https://www.mercadolivre.com.br/p/${produto.id}`,
+    shipping: oferta.shipping,
+    official_store_id: oferta.official_store_id,
+    attributes: produto.attributes || []
+  });
+  return { ...n, produtoCatalogo: produto.id };
+}
+async function calcularFretes(itens, cep, { token, fetcher }) {
+  const cepLimpo = String(cep || "").replace(/\D/g, "");
+  if (cepLimpo.length !== 8) return;
+  const semFrete = itens.filter((i) => !i.freteGratis).slice(0, 12);
+  await Promise.all(
+    semFrete.map(async (i) => {
+      try {
+        const r = await chamar(`/items/${i.id.slice(3)}/shipping_options?zip_code=${cepLimpo}`, token, fetcher);
+        if (!r.ok) return;
+        const custos = (r.json?.options || []).map((o) => o.cost).filter((c) => typeof c === "number");
+        if (custos.length) i.frete = Math.min(...custos);
+      } catch (_) {
+      }
+    })
+  );
+}
+async function diagnosticarML(env, fetcher = fetch) {
+  const passos = [];
+  let token;
+  try {
+    token = await obterToken(env, fetcher);
+    passos.push({ etapa: "chaves do aplicativo (token)", status: 200, ok: true });
+  } catch (e) {
+    passos.push({ etapa: "chaves do aplicativo (token)", ok: false, mensagem: e.message });
+    return passos;
+  }
+  const teste = async (etapa, caminho) => {
+    const r = await chamar(caminho, token, fetcher).catch((e) => ({ status: 0, ok: false, json: { message: String(e) } }));
+    passos.push({ etapa, status: r.status, ok: r.ok, mensagem: r.ok ? "" : mensagemML(r.json) });
+    return r;
+  };
+  await teste("busca de an\xFAncios", "/sites/MLB/search?q=sabonete&limit=1");
+  const cat = await teste("busca no cat\xE1logo", "/products/search?status=active&site_id=MLB&q=sabonete&limit=1");
+  const prod = cat.json?.results?.[0]?.id;
+  if (prod) {
+    const ofs = await teste("ofertas de um produto do cat\xE1logo", `/products/${prod}/items?limit=1`);
+    const item = ofs.json?.results?.[0]?.item_id;
+    if (item) {
+      await teste("detalhes de um an\xFAncio", `/items/${item}`);
+      await teste("frete de um an\xFAncio (CEP de exemplo)", `/items/${item}/shipping_options?zip_code=01310100`);
+    }
+  }
+  return passos;
 }
 
 // worker/src/index.js
@@ -191,36 +274,42 @@ var json = (dados, status, extra) => new Response(JSON.stringify(dados), {
 });
 async function tratar(req, env, ctx = {}, fetcher = fetch) {
   const url = new URL(req.url);
-  const cabecalhos = cors(env, req);
-  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cabecalhos });
-  if (req.method !== "GET") return json({ erro: "Use GET." }, 405, cabecalhos);
+  const cabecalhos2 = cors(env, req);
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cabecalhos2 });
+  if (req.method !== "GET") return json({ erro: "Use GET." }, 405, cabecalhos2);
+  if (url.pathname === "/" || url.pathname === "") {
+    return json({ servico: "Minhas Compras", rotas: ["/api/saude", "/api/buscar?q=produto&cep=00000000", "/api/diagnostico"] }, 200, cabecalhos2);
+  }
+  if (url.pathname === "/api/diagnostico") {
+    return json({ passos: await diagnosticarML(env, fetcher) }, 200, cabecalhos2);
+  }
   if (url.pathname === "/api/saude") {
-    return json({ ok: true, mercadolivre: Boolean(env.ML_CLIENT_ID && env.ML_CLIENT_SECRET) }, 200, cabecalhos);
+    return json({ ok: true, mercadolivre: Boolean(env.ML_CLIENT_ID && env.ML_CLIENT_SECRET) }, 200, cabecalhos2);
   }
   if (url.pathname === "/api/buscar") {
     const q = (url.searchParams.get("q") || "").trim().slice(0, 120);
-    if (q.length < 2) return json({ erro: "Digite pelo menos 2 letras para buscar." }, 400, cabecalhos);
+    if (q.length < 2) return json({ erro: "Digite pelo menos 2 letras para buscar." }, 400, cabecalhos2);
     const cep = (url.searchParams.get("cep") || "").replace(/\D/g, "").slice(0, 8);
     const chave = new Request(`https://cache.minhas-compras/buscar?q=${encodeURIComponent(q.toLowerCase())}&cep=${cep}`);
     const cache = typeof caches !== "undefined" ? caches.default : null;
     const salvo = cache ? await cache.match(chave) : null;
     if (salvo) {
       const r = new Response(salvo.body, salvo);
-      for (const [k, v] of Object.entries(cabecalhos)) r.headers.set(k, v);
+      for (const [k, v] of Object.entries(cabecalhos2)) r.headers.set(k, v);
       return r;
     }
     try {
       const itens = await buscarML(q, { env, cep, fetcher });
       const corpo = { q, cep: cep || null, verificadoEm: (/* @__PURE__ */ new Date()).toISOString(), fontes: ["mercadolivre"], itens };
-      const resposta = json(corpo, 200, { ...cabecalhos, "cache-control": `public, max-age=${CACHE_SEGUNDOS}` });
+      const resposta = json(corpo, 200, { ...cabecalhos2, "cache-control": `public, max-age=${CACHE_SEGUNDOS}` });
       if (cache && ctx.waitUntil) ctx.waitUntil(cache.put(chave, resposta.clone()));
       return resposta;
     } catch (e) {
       const status = e instanceof ErroDeFonte ? e.status : 500;
-      return json({ erro: e instanceof ErroDeFonte ? e.message : "Erro inesperado no servidor." }, status, cabecalhos);
+      return json({ erro: e instanceof ErroDeFonte ? e.message : "Erro inesperado no servidor." }, status, cabecalhos2);
     }
   }
-  return json({ erro: "Endere\xE7o n\xE3o encontrado." }, 404, cabecalhos);
+  return json({ erro: "Endere\xE7o n\xE3o encontrado." }, 404, cabecalhos2);
 }
 var src_default = {
   fetch: (req, env, ctx) => tratar(req, env, ctx)
