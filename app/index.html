@@ -90,6 +90,28 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 .painel-conta h2 { font-family: var(--font-display); font-size: 18px; }
 .painel-conta p { margin: 0; color: var(--muted); font-size: 14px; }
 .painel-conta ul { margin: 0; padding-left: 18px; font-size: 14px; display: grid; gap: 4px; }
+.botao-conta .bolinha.foto { position: relative; overflow: hidden; font: 800 12px var(--font-body); }
+.botao-conta .bolinha.foto .logo, .conta-foto .logo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.girando { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); display: inline-block; }
+@media (prefers-reduced-motion: no-preference) { .girando { animation: gira 0.8s linear infinite; } @keyframes gira { to { transform: rotate(360deg); } } }
+.conta-cabeca { display: flex; align-items: center; gap: 10px; }
+.conta-cabeca > div { display: grid; min-width: 0; flex: 1; }
+.conta-cabeca strong { font-size: 16px; }
+.conta-cabeca span { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conta-cabeca .fechar { width: 30px; height: 30px; font-size: 18px; flex: none; }
+.conta-foto { position: relative; overflow: hidden; width: 42px; height: 42px; border-radius: 50%; flex: none; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 800; }
+.sinc { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ponto { width: 9px; height: 9px; border-radius: 50%; background: var(--good); flex: none; }
+.ponto.alerta { background: var(--off); }
+.ponto.girando { background: none; }
+.conta-acoes { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.botao-google {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px; width: 100%; border: 1px solid #dadce0; background: #fff; color: #1f1f1f;
+  border-radius: 999px; padding: 11px 16px; font: 600 15px/1 var(--font-body);
+}
+.botao-google:hover { background: #f8faf9; box-shadow: 0 1px 3px rgb(0 0 0 / 0.12); }
+.nota-conta { font-size: 12.5px !important; }
+.nota-conta a { color: var(--accent); }
 .em-breve { justify-self: start; font-size: 12px; font-weight: 700; color: var(--warn); background: var(--warn-bg); padding: 2px 10px; border-radius: 999px; }
 
 /* Busca */
@@ -504,21 +526,10 @@ dialog .form-lista { padding: 6px 18px; }
     </button>
     <button type="button" class="botao-conta" id="botao-conta" aria-expanded="false" aria-controls="painel-conta">
       <span class="bolinha" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="5.5" r="3" fill="currentColor"/><path d="M2 15c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z" fill="currentColor"/></svg></span>
-      <span class="rotulo-conta">Sem conta</span>
+      <span class="rotulo-conta">Entrar</span>
     </button>
     </div>
-    <div class="painel-conta" id="painel-conta" hidden>
-      <h2>Você está usando sem conta</h2>
-      <p>Funciona completo assim. Seus favoritos, listas e preferências ficam salvos só neste aparelho.</p>
-      <span class="em-breve">Em breve</span>
-      <p>Com uma conta (entrar com Google ou e-mail) você vai poder:</p>
-      <ul>
-        <li>salvar produtos e ver em qualquer aparelho;</li>
-        <li>montar a lista do mês;</li>
-        <li>receber aviso quando o preço cair.</li>
-      </ul>
-      <button type="button" class="botao-sec" id="fechar-conta">Fechar</button>
-    </div>
+    <div class="painel-conta" id="painel-conta" hidden></div>
   </div>
 </header>
 

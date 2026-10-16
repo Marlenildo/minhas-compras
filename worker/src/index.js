@@ -5,6 +5,7 @@
 import { buscarML, diagnosticarML, iniciarConexao, concluirConexao, ErroDeFonte } from './mercadolivre.js';
 import { buscarGoogle, diagnosticarGoogle, buscarLojasDoProduto } from './google.js';
 import { localDoCep } from './cep.js';
+import { tratarConta } from './conta.js';
 
 /** Fonte usada nas buscas: Google Shopping quando há chave da SerpApi; senão, Mercado Livre. */
 const fonteAtiva = (env) => (env.SERPAPI_KEY ? 'google' : env.ML_CLIENT_ID && env.ML_CLIENT_SECRET ? 'mercadolivre' : null);
@@ -15,8 +16,9 @@ function cors(env, req) {
   const permitida = permitidas.includes('*') ? '*' : permitidas.includes(origem) ? origem : permitidas[0];
   return {
     'access-control-allow-origin': permitida,
-    'access-control-allow-methods': 'GET, OPTIONS',
-    'access-control-allow-headers': 'content-type',
+    'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'access-control-allow-headers': 'content-type, authorization',
+    'access-control-max-age': '86400',
     vary: 'origin',
   };
 }
@@ -31,10 +33,15 @@ export async function tratar(req, env, ctx = {}, fetcher = fetch) {
   const url = new URL(req.url);
   const cabecalhos = cors(env, req);
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cabecalhos });
+
+  // Conta: entrar com Google, sessão e dados salvos
+  const daConta = await tratarConta(req, env, url, fetcher, cabecalhos);
+  if (daConta) return daConta;
+
   if (req.method !== 'GET') return json({ erro: 'Use GET.' }, 405, cabecalhos);
 
   if (url.pathname === '/' || url.pathname === '') {
-    return json({ servico: 'Minhas Compras', rotas: ['/api/saude', '/api/buscar?q=produto', '/api/lojas?token=...', '/api/diagnostico'] }, 200, cabecalhos);
+    return json({ servico: 'Minhas Compras', rotas: ['/api/saude', '/api/buscar?q=produto', '/api/lojas?token=...', '/api/diagnostico', '/api/auth/google', '/api/conta'] }, 200, cabecalhos);
   }
 
   // Conexão da conta do dono ao Mercado Livre (feita uma vez)
@@ -68,7 +75,10 @@ export async function tratar(req, env, ctx = {}, fetcher = fetch) {
 
   if (url.pathname === '/api/saude') {
     return json(
-      { ok: true, fonte: fonteAtiva(env), google: Boolean(env.SERPAPI_KEY), mercadolivre: Boolean(env.ML_CLIENT_ID && env.ML_CLIENT_SECRET) },
+      {
+        ok: true, fonte: fonteAtiva(env), google: Boolean(env.SERPAPI_KEY), mercadolivre: Boolean(env.ML_CLIENT_ID && env.ML_CLIENT_SECRET),
+        conta: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.DB && env.TOKENS),
+      },
       200,
       cabecalhos
     );

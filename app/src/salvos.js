@@ -7,6 +7,7 @@ const LIMITE_FOTO = 30000; // fotos embutidas muito grandes não vão para o arm
 
 export function garantirSalvos(prefs) {
   if (!prefs.salvos || typeof prefs.salvos !== 'object') prefs.salvos = {};
+  if (!prefs.apagados || typeof prefs.apagados !== 'object') prefs.apagados = {};
   if (!Array.isArray(prefs.listas) || !prefs.listas.length) prefs.listas = [{ id: FAVORITOS, nome: 'Favoritos' }];
   if (!prefs.listas.some((l) => l.id === FAVORITOS)) prefs.listas.unshift({ id: FAVORITOS, nome: 'Favoritos' });
   return prefs;
@@ -39,6 +40,7 @@ export const estaSalvo = (prefs, id) => Boolean(prefs.salvos?.[id]);
 /** Salva (ou acrescenta numa lista). Não mexe no preço de quando foi salvo. */
 export function salvarItem(prefs, item, listaId = FAVORITOS, agora = new Date().toISOString()) {
   garantirSalvos(prefs);
+  delete prefs.apagados?.[item.id];
   const atual = prefs.salvos[item.id];
   if (atual) {
     if (!atual.listas.includes(listaId)) atual.listas.push(listaId);
@@ -64,15 +66,31 @@ export function tirarDaLista(prefs, id, listaId) {
   s.listas = s.listas.filter((l) => l !== listaId);
   if (!s.listas.length) {
     delete prefs.salvos[id];
+    marcarApagado(prefs, id);
     return s;
   }
   return null;
 }
 
+/** Lembra que foi apagado, para outro aparelho não trazer de volta ao juntar. */
+function marcarApagado(prefs, id, quando = new Date().toISOString()) {
+  (prefs.apagados ||= {})[id] = quando;
+}
+
 export function removerSalvo(prefs, id) {
   const s = prefs.salvos?.[id];
-  if (s) delete prefs.salvos[id];
+  if (s) {
+    delete prefs.salvos[id];
+    marcarApagado(prefs, id);
+  }
   return s || null;
+}
+
+/** Desfaz uma remoção. */
+export function restaurarSalvo(prefs, id, registro) {
+  if (!registro) return;
+  prefs.salvos[id] = registro;
+  delete prefs.apagados?.[id];
 }
 
 export function alternarLista(prefs, item, listaId) {
@@ -143,4 +161,67 @@ export function registrarPrecosVistos(prefs, itens, agora = new Date().toISOStri
 export function variacao(s) {
   if (!s || s.ultimoPreco == null || s.precoSalvo == null) return 0;
   return Math.round((s.ultimoPreco - s.precoSalvo) * 100) / 100;
+}
+
+// ---------------------------------------------------------------------------
+// Juntar o que está no aparelho com o que está na conta
+// ---------------------------------------------------------------------------
+
+const DIAS_LEMBRAR_APAGADO = 90;
+const maisNovo = (a, b) => (String(a || '') > String(b || '') ? a : b);
+const maisVelho = (a, b) => (!a ? b : !b ? a : String(a) < String(b) ? a : b);
+
+/**
+ * Junta dois conteúdos (aparelho e conta) sem perder nada:
+ * - salvos dos dois lados; o mesmo item fica com a data e o preço de quando foi salvo primeiro,
+ *   as listas dos dois, a maior quantidade e o preço visto mais recente;
+ * - o que foi apagado (de qualquer lado) depois de salvo não volta;
+ * - listas dos dois lados (mesmo nome vira uma lista só);
+ * - preferências: as do aparelho (mais recentes) por cima.
+ */
+export function juntarConteudo(local = {}, remoto = {}, agora = new Date()) {
+  const r = structuredClone(remoto || {});
+  const l = structuredClone(local || {});
+
+  // Listas: por id, e mesmo nome = mesma lista
+  const listas = [...(r.listas || [])];
+  const remap = {};
+  for (const lista of l.listas || []) {
+    const mesmoId = listas.find((x) => x.id === lista.id);
+    const mesmoNome = listas.find((x) => x.nome.toLowerCase() === lista.nome.toLowerCase());
+    if (mesmoId) continue;
+    if (mesmoNome) remap[lista.id] = mesmoNome.id;
+    else listas.push(lista);
+  }
+
+  // O que foi apagado: o mais recente de cada lado
+  const apagados = { ...(r.apagados || {}) };
+  for (const [id, quando] of Object.entries(l.apagados || {})) apagados[id] = maisNovo(apagados[id], quando);
+  const limite = new Date(agora.getTime() - DIAS_LEMBRAR_APAGADO * 86400_000).toISOString();
+  for (const [id, quando] of Object.entries(apagados)) if (quando < limite) delete apagados[id];
+
+  const salvos = {};
+  const ids = new Set([...Object.keys(r.salvos || {}), ...Object.keys(l.salvos || {})]);
+  for (const id of ids) {
+    const a = r.salvos?.[id];
+    const b = l.salvos?.[id] ? { ...l.salvos[id], listas: l.salvos[id].listas.map((x) => remap[x] || x) } : null;
+    const juntos = !a ? b : !b ? a : {
+      ...a,
+      item: { ...a.item, ...b.item, foto: b.item.foto || a.item.foto },
+      listas: [...new Set([...a.listas, ...b.listas])],
+      salvoEm: maisVelho(a.salvoEm, b.salvoEm),
+      precoSalvo: String(a.salvoEm) <= String(b.salvoEm) ? a.precoSalvo : b.precoSalvo,
+      totalSalvo: String(a.salvoEm) <= String(b.salvoEm) ? a.totalSalvo : b.totalSalvo,
+      ultimoPreco: String(a.vistoEm) >= String(b.vistoEm) ? a.ultimoPreco : b.ultimoPreco,
+      vistoEm: maisNovo(a.vistoEm, b.vistoEm),
+      qtd: Math.max(a.qtd || 1, b.qtd || 1),
+    };
+    // Apagado depois de ter sido salvo (pela última vez): fica apagado
+    const ultimoSalvo = maisNovo(a?.salvoEm, b?.salvoEm);
+    if (apagados[id] && apagados[id] >= ultimoSalvo) continue;
+    delete apagados[id];
+    salvos[id] = juntos;
+  }
+
+  return { ...r, ...l, listas, salvos, apagados };
 }

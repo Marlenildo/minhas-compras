@@ -67,3 +67,42 @@ test('remover devolve o registro para poder desfazer', () => {
   p.salvos.a = r;
   assert.equal(estaSalvo(p, 'a'), true);
 });
+
+test('juntar aparelho e conta: soma os dois lados sem perder nada', async () => {
+  const { juntarConteudo } = await import('../app/src/salvos.js');
+  const conta = garantirSalvos({});
+  salvarItem(conta, oferta('a', 10), FAVORITOS, '2026-10-10T10:00:00Z');
+  const casaConta = criarLista(conta, 'Casa');
+  salvarItem(conta, oferta('b', 20), casaConta, '2026-10-11T10:00:00Z');
+
+  const celular = garantirSalvos({ cep: '58397000' });
+  salvarItem(celular, oferta('a', 12), FAVORITOS, '2026-10-12T10:00:00Z'); // mesmo item, salvo depois
+  const casaCel = criarLista(celular, 'casa'); // mesmo nome, outro id
+  salvarItem(celular, oferta('c', 5), casaCel, '2026-10-12T11:00:00Z');
+  mudarQuantidade(celular, 'a', +2);
+
+  const j = juntarConteudo(celular, conta);
+  assert.deepEqual(Object.keys(j.salvos).sort(), ['a', 'b', 'c']);
+  assert.equal(j.salvos.a.precoSalvo, 10); // preço de quando salvou primeiro
+  assert.equal(j.salvos.a.qtd, 3);
+  assert.equal(j.listas.filter((l) => l.nome.toLowerCase() === 'casa').length, 1); // uma lista "Casa" só
+  assert.deepEqual(j.salvos.c.listas, [casaConta]);
+  assert.equal(j.cep, '58397000');
+});
+
+test('juntar: o que foi apagado num aparelho não volta pelo outro', async () => {
+  const { juntarConteudo } = await import('../app/src/salvos.js');
+  const conta = garantirSalvos({});
+  salvarItem(conta, oferta('a', 10), FAVORITOS, '2026-10-10T10:00:00Z');
+  salvarItem(conta, oferta('b', 10), FAVORITOS, '2026-10-10T10:00:00Z');
+  const celular = structuredClone(conta);
+  removerSalvo(celular, 'a'); // apagou no celular
+  const j = juntarConteudo(celular, conta);
+  assert.deepEqual(Object.keys(j.salvos), ['b']);
+
+  // Salvo de novo depois de apagado: volta
+  salvarItem(conta, oferta('a', 9), FAVORITOS, '2099-01-01T00:00:00Z');
+  delete conta.salvos.a; salvarItem(conta, oferta('a', 9), FAVORITOS, '2099-01-01T00:00:00Z');
+  const k = juntarConteudo(celular, conta, new Date('2099-01-02T00:00:00Z'));
+  assert.ok(k.salvos.a);
+});

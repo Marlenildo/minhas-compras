@@ -5,8 +5,9 @@ import { eRelevante, parecenca, buscaParecida, LIMIAR_PARECIDO } from './relevan
 import { montarFacetas, passaNasFacetas } from './facetas.js';
 import {
   FAVORITOS, garantirSalvos, salvarItem, estaSalvo, removerSalvo, tirarDaLista, alternarLista, criarLista, renomearLista,
-  apagarLista, itensDaLista, contarLista, totalDaLista, mudarQuantidade, registrarPrecosVistos, variacao,
+  apagarLista, itensDaLista, contarLista, totalDaLista, mudarQuantidade, registrarPrecosVistos, variacao, restaurarSalvo,
 } from './salvos.js';
+import { criarConta } from './conta.js';
 
 // ---------------------------------------------------------------------------
 // Estado
@@ -29,11 +30,26 @@ let editandoLista = null; // id da lista sendo renomeada
 let apagandoLista = null; // id da lista esperando confirmação para apagar
 let itemDasListas = null; // oferta aberta em "Salvar em lista"
 
-function salvar() {
+function gravarLocal() {
   try {
     localStorage.setItem(CHAVE, JSON.stringify(prefs));
   } catch (_) {
     /* o app funciona sem lembrar */
+  }
+}
+
+// O que vai para a conta (a última busca, por exemplo, fica só no aparelho)
+const CAMPOS_SINC = ['salvos', 'listas', 'apagados', 'cep', 'ordem', 'tamanhos', 'fretes', 'manuais'];
+const conteudoSinc = () => Object.fromEntries(CAMPOS_SINC.map((k) => [k, prefs[k]]));
+let conta = null;
+let ultimoSinc = '';
+
+function salvar() {
+  gravarLocal();
+  const atual = JSON.stringify(conteudoSinc());
+  if (atual !== ultimoSinc) {
+    ultimoSinc = atual;
+    conta?.mudou();
   }
 }
 
@@ -767,6 +783,23 @@ function aoClicar(ev) {
   }
   const salvoId = alvo.closest('.salvos li')?.dataset.id;
   switch (alvo.dataset.acao) {
+    case 'entrar-google':
+      return conta.entrar();
+    case 'sair-conta':
+      return conta.sair();
+    case 'apagar-conta':
+      apagandoConta = true;
+      return desenharConta();
+    case 'cancelar-apagar-conta':
+      apagandoConta = false;
+      return desenharConta();
+    case 'apagar-conta-sim':
+      apagandoConta = false;
+      return conta.apagarConta();
+    case 'sincronizar-agora':
+      return conta.sincronizar();
+    case 'fechar-conta':
+      return abrirPainelConta(false);
     case 'editar-cep': {
       const caixa = $('#form-busca');
       caixa.classList.add('expandida');
@@ -810,7 +843,7 @@ function aoClicar(ev) {
       salvar();
       redesenharTudo();
       return avisar('Tirado da lista.', 'Desfazer', () => {
-        prefs.salvos[salvoId] = antes;
+        restaurarSalvo(prefs, salvoId, antes);
         salvar();
         redesenharTudo();
       });
@@ -1072,7 +1105,7 @@ function favoritar(id) {
     salvar();
     redesenharTudo();
     avisar('Tirado dos salvos.', 'Desfazer', () => {
-      prefs.salvos[id] = registro;
+      restaurarSalvo(prefs, id, registro);
       salvar();
       redesenharTudo();
     });
@@ -1167,6 +1200,69 @@ function desenharSalvos() {
     <div class="salvos-corpo">${cabecaLista}${linhas}</div>
     <p class="nota-tabela">Seus salvos ficam guardados neste aparelho. Com a conta (em breve), eles vão aparecer em qualquer aparelho.</p>`;
   if (editandoLista) $('#nome-lista')?.select();
+}
+
+// ---------------------------------------------------------------------------
+// Conta
+// ---------------------------------------------------------------------------
+
+let apagandoConta = false;
+
+const SVG_GOOGLE = `<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>`;
+
+function abrirPainelConta(abrir) {
+  $('#painel-conta').hidden = !abrir;
+  $('#botao-conta').setAttribute('aria-expanded', String(abrir));
+  if (!abrir) apagandoConta = false;
+  if (abrir) desenharConta();
+}
+
+function fotoDoUsuario(u, classe) {
+  const letra = esc((u?.nome || u?.email || '?').trim()[0]?.toUpperCase() || '?');
+  return `<span class="${classe}" aria-hidden="true">${letra}${u?.foto ? `<img class="logo" src="${esc(u.foto)}" alt="" referrerpolicy="no-referrer">` : ''}</span>`;
+}
+
+function desenharConta() {
+  if (!conta) return;
+  const e = conta.estado;
+  const u = e.sessao ? e.usuario : null;
+  const botao = $('#botao-conta');
+  botao.innerHTML = u
+    ? `${fotoDoUsuario(u, 'bolinha foto')}<span class="rotulo-conta">${esc((u.nome || 'Minha conta').split(' ')[0])}</span>${e.situacao === 'sincronizando' ? '<span class="girando" aria-hidden="true"></span>' : ''}`
+    : `<span class="bolinha" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="5.5" r="3" fill="currentColor"/><path d="M2 15c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z" fill="currentColor"/></svg></span><span class="rotulo-conta">Entrar</span>`;
+  botao.setAttribute('aria-label', u ? `Conta de ${u.nome || u.email}` : 'Entrar na conta');
+  if ($('#painel-conta').hidden) return;
+
+  const nSalvos = Object.keys(prefs.salvos).length;
+  const hora = e.ultimaSinc ? e.ultimaSinc.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+  const situacao = {
+    sincronizando: ['girando', 'Sincronizando…'],
+    sincronizado: ['ok', `Sincronizado${hora ? ` às ${hora}` : ''}`],
+    offline: ['alerta', 'Sem internet: está tudo guardado no aparelho e vai para a conta quando a conexão voltar'],
+    erro: ['alerta', 'Não deu para sincronizar agora'],
+    parado: ['ok', 'Conectado'],
+  }[e.situacao] || ['ok', 'Conectado'];
+
+  $('#painel-conta').innerHTML = u
+    ? `<div class="conta-cabeca">${fotoDoUsuario(u, 'conta-foto')}<div><strong>${esc(u.nome || 'Sua conta')}</strong><span>${esc(u.email || '')}</span></div>
+        <button type="button" class="fechar" data-acao="fechar-conta" aria-label="Fechar">×</button></div>
+      <p class="sinc"><span class="ponto ${situacao[0]}" aria-hidden="true"></span>${esc(situacao[1])}${e.situacao === 'erro' || e.situacao === 'offline' ? ' · <button type="button" class="link mini" data-acao="sincronizar-agora">tentar de novo</button>' : ''}</p>
+      <p>Seus ${nSalvos} salvo${nSalvos === 1 ? '' : 's'}, listas e preferências aparecem em qualquer aparelho em que você entrar com esta conta.</p>
+      ${
+        apagandoConta
+          ? `<div class="confirma"><span>Apagar sua conta? Isso apaga da conta seus salvos e listas para sempre. O que está neste aparelho continua aqui.</span>
+              <button type="button" class="botao perigo" data-acao="apagar-conta-sim">Apagar conta</button>
+              <button type="button" class="link" data-acao="cancelar-apagar-conta">Cancelar</button></div>`
+          : `<div class="conta-acoes"><button type="button" class="botao-sec" data-acao="sair-conta">Sair</button>
+              <button type="button" class="link perigo" data-acao="apagar-conta">Apagar minha conta</button></div>`
+      }
+      <a class="link mini" href="privacidade.html" target="_blank" rel="noopener">Política de privacidade</a>`
+    : `<div class="conta-cabeca"><div><strong>Leve seus salvos para qualquer aparelho</strong></div>
+        <button type="button" class="fechar" data-acao="fechar-conta" aria-label="Fechar">×</button></div>
+      <p>Hoje seus favoritos, listas e preferências ficam só neste aparelho. Entre com o Google e eles aparecem no celular e no computador, sem perder o que já está aqui.</p>
+      <button type="button" class="botao-google" data-acao="entrar-google">${SVG_GOOGLE}Entrar com Google</button>
+      ${e.disponivel ? '' : '<p class="nd">Na demonstração a conta não funciona; use a versão publicada do app.</p>'}
+      <p class="nota-conta">Usamos só seu nome, e-mail e foto. Nada do seu Gmail ou Drive. <a href="privacidade.html" target="_blank" rel="noopener">Política de privacidade</a></p>`;
 }
 
 function abrirListasDoItem(id) {
@@ -1269,15 +1365,29 @@ function iniciar() {
   );
 
   atualizarContadorSalvos();
-  const painel = $('#painel-conta');
-  $('#botao-conta').addEventListener('click', () => {
-    painel.hidden = !painel.hidden;
-    $('#botao-conta').setAttribute('aria-expanded', String(!painel.hidden));
+
+  // Conta: entrar com Google e sincronizar
+  ultimoSinc = JSON.stringify(conteudoSinc());
+  conta = criarConta({
+    lerConteudo: conteudoSinc,
+    aplicarConteudo: (c) => {
+      for (const k of CAMPOS_SINC) if (c[k] !== undefined) prefs[k] = c[k];
+      garantirSalvos(prefs);
+      ultimoSinc = JSON.stringify(conteudoSinc());
+      gravarLocal();
+      $('#cep').value = prefs.cep ? `${prefs.cep.slice(0, 5)}-${prefs.cep.slice(5)}` : '';
+      redesenharTudo();
+    },
+    aoMudar: () => desenharConta(),
+    avisar,
   });
-  $('#fechar-conta').addEventListener('click', () => {
-    painel.hidden = true;
-    $('#botao-conta').setAttribute('aria-expanded', 'false');
+  $('#botao-conta').addEventListener('click', () => abrirPainelConta($('#painel-conta').hidden));
+  document.addEventListener('click', (ev) => {
+    // composedPath: o botão pode ter sido redesenhado durante o clique
+    const dentro = ev.composedPath().some((el) => el.id === 'painel-conta' || el.id === 'botao-conta');
+    if (!$('#painel-conta').hidden && !dentro) abrirPainelConta(false);
   });
+  conta.iniciar();
 
   const inicial = prefs.ultimaBusca || (modoDemo() ? 'sabonete líquido' : '');
   if (inicial) {

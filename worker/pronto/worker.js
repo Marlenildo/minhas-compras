@@ -121,8 +121,8 @@ async function pedirToken(campos, env, fetcher) {
     headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
     body: new URLSearchParams({ client_id: env.ML_CLIENT_ID, client_secret: env.ML_CLIENT_SECRET, ...campos })
   });
-  const json2 = await r.json().catch(() => null);
-  return { ok: r.ok, status: r.status, json: json2 };
+  const json3 = await r.json().catch(() => null);
+  return { ok: r.ok, status: r.status, json: json3 };
 }
 function guardarEmCache(j, tipo) {
   tokenEmCache = { valor: j.access_token, tipo, expira: Date.now() + Math.max(60, (j.expires_in || 21600) - 300) * 1e3 };
@@ -189,8 +189,8 @@ var ErroDeFonte = class extends Error {
 var cabecalhos = (token) => ({ authorization: `Bearer ${token}`, accept: "application/json" });
 async function chamar(caminho, token, fetcher) {
   const r = await fetcher(`${API}${caminho}`, { headers: cabecalhos(token) });
-  const json2 = await r.json().catch(() => null);
-  return { status: r.status, ok: r.ok, json: json2 };
+  const json3 = await r.json().catch(() => null);
+  return { status: r.status, ok: r.ok, json: json3 };
 }
 var mensagemML = (j) => j && (j.message || j.error) || "";
 async function buscarML(q, { env, cep, limite = 30, fetcher = fetch } = {}) {
@@ -568,6 +568,209 @@ async function localDoCep(cep, { env, fetcher = fetch } = {}) {
   return local;
 }
 
+// worker/src/conta.js
+var GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
+var GOOGLE_TOKEN = "https://oauth2.googleapis.com/token";
+var SESSAO_DIAS = 90;
+var LIMITE_DADOS = 3e5;
+var ESQUEMA = [
+  "CREATE TABLE IF NOT EXISTS usuarios (id TEXT PRIMARY KEY, google_sub TEXT UNIQUE NOT NULL, email TEXT, nome TEXT, foto TEXT, criado_em INTEGER NOT NULL)",
+  "CREATE TABLE IF NOT EXISTS sessoes (token_hash TEXT PRIMARY KEY, usuario_id TEXT NOT NULL, criada_em INTEGER NOT NULL, expira_em INTEGER NOT NULL)",
+  "CREATE INDEX IF NOT EXISTS sessoes_usuario ON sessoes (usuario_id)",
+  "CREATE TABLE IF NOT EXISTS dados (usuario_id TEXT PRIMARY KEY, conteudo TEXT NOT NULL, versao INTEGER NOT NULL, atualizado_em INTEGER NOT NULL)"
+];
+var bancosPreparados = /* @__PURE__ */ new WeakSet();
+async function prepararBanco(db) {
+  if (bancosPreparados.has(db)) return;
+  await db.batch(ESQUEMA.map((sql) => db.prepare(sql)));
+  bancosPreparados.add(db);
+}
+var b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+var aleatorio = (n = 32) => b64url(crypto.getRandomValues(new Uint8Array(n)));
+async function sha256(texto) {
+  const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(texto));
+  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+function lerJwt(jwt) {
+  const parte = String(jwt || "").split(".")[1];
+  if (!parte) return null;
+  const base64 = parte.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(parte.length / 4) * 4, "=");
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch (_) {
+    return null;
+  }
+}
+var ErroConta = class extends Error {
+  constructor(mensagem, status = 400) {
+    super(mensagem);
+    this.status = status;
+  }
+};
+function origensDoApp(env, url) {
+  const lista = String(env.ORIGENS_APP || "https://minhas-compras.marlenildo.online").split(",").map((s) => s.trim()).filter(Boolean);
+  return /* @__PURE__ */ new Set([...lista, url.origin]);
+}
+function voltaPermitida(volta, env, url) {
+  try {
+    const u = new URL(volta);
+    return origensDoApp(env, url).has(u.origin) ? `${u.origin}${u.pathname}` : null;
+  } catch (_) {
+    return null;
+  }
+}
+function faltaConfiguracao(env) {
+  const faltam = [];
+  if (!env.GOOGLE_CLIENT_ID) faltam.push("GOOGLE_CLIENT_ID");
+  if (!env.GOOGLE_CLIENT_SECRET) faltam.push("GOOGLE_CLIENT_SECRET");
+  if (!env.DB) faltam.push("banco D1 com o nome DB");
+  if (!env.TOKENS) faltam.push("KV com o nome TOKENS");
+  return faltam;
+}
+async function salvarUsuarioGoogle(db, perfil) {
+  const atual = await db.prepare("SELECT id FROM usuarios WHERE google_sub = ?").bind(perfil.sub).first();
+  if (atual) {
+    await db.prepare("UPDATE usuarios SET email = ?, nome = ?, foto = ? WHERE id = ?").bind(perfil.email || null, perfil.name || null, perfil.picture || null, atual.id).run();
+    return atual.id;
+  }
+  const id = crypto.randomUUID();
+  await db.prepare("INSERT INTO usuarios (id, google_sub, email, nome, foto, criado_em) VALUES (?, ?, ?, ?, ?, ?)").bind(id, perfil.sub, perfil.email || null, perfil.name || null, perfil.picture || null, Date.now()).run();
+  return id;
+}
+async function criarSessao(db, usuarioId) {
+  const token = aleatorio(32);
+  const agora = Date.now();
+  await db.prepare("INSERT INTO sessoes (token_hash, usuario_id, criada_em, expira_em) VALUES (?, ?, ?, ?)").bind(await sha256(token), usuarioId, agora, agora + SESSAO_DIAS * 864e5).run();
+  return token;
+}
+var publico = (u) => ({ id: u.id, nome: u.nome, email: u.email, foto: u.foto });
+async function usuarioDaSessao(req, db) {
+  const m = (req.headers.get("authorization") || "").match(/^Bearer\s+([\w-]{20,})$/);
+  if (!m) return null;
+  const linha = await db.prepare(
+    "SELECT u.id, u.nome, u.email, u.foto, s.token_hash FROM sessoes s JOIN usuarios u ON u.id = s.usuario_id WHERE s.token_hash = ? AND s.expira_em > ?"
+  ).bind(await sha256(m[1]), Date.now()).first();
+  return linha || null;
+}
+var json = (dados, status, cabecalhos2) => new Response(JSON.stringify(dados), { status, headers: { "content-type": "application/json; charset=utf-8", ...cabecalhos2 } });
+var ROTAS = /* @__PURE__ */ new Set(["/api/auth/google", "/api/auth/google/retorno", "/api/auth/trocar", "/api/auth/sair", "/api/conta", "/api/conta/dados"]);
+async function tratarConta(req, env, url, fetcher = fetch, cabecalhos2 = {}) {
+  if (!ROTAS.has(url.pathname)) return null;
+  const faltam = faltaConfiguracao(env);
+  if (faltam.length) return json({ erro: `A conta ainda n\xE3o est\xE1 configurada no servidor. Falta: ${faltam.join(", ")}.` }, 503, cabecalhos2);
+  try {
+    await prepararBanco(env.DB);
+    const redirectUri = `${url.origin}/api/auth/google/retorno`;
+    if (url.pathname === "/api/auth/google" && req.method === "GET") {
+      const volta = voltaPermitida(url.searchParams.get("volta") || "", env, url);
+      if (!volta) throw new ErroConta("Endere\xE7o de volta n\xE3o permitido.", 400);
+      const estado = aleatorio(24);
+      await env.TOKENS.put(`oauth:${estado}`, volta, { expirationTtl: 600 });
+      const destino = `${GOOGLE_AUTH}?${new URLSearchParams({
+        client_id: env.GOOGLE_CLIENT_ID,
+        redirect_uri: redirectUri,
+        response_type: "code",
+        scope: "openid email profile",
+        state: estado,
+        prompt: "select_account"
+      })}`;
+      return Response.redirect(destino, 302);
+    }
+    if (url.pathname === "/api/auth/google/retorno" && req.method === "GET") {
+      const estado = url.searchParams.get("state") || "";
+      const volta = estado ? await env.TOKENS.get(`oauth:${estado}`) : null;
+      if (!volta) throw new ErroConta("Este login venceu. Volte ao app e toque em \u201CEntrar com Google\u201D de novo.", 400);
+      await env.TOKENS.delete(`oauth:${estado}`);
+      if (url.searchParams.get("error")) return Response.redirect(`${volta}#login_erro=cancelado`, 302);
+      const r = await fetcher(GOOGLE_TOKEN, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+        body: new URLSearchParams({
+          code: url.searchParams.get("code") || "",
+          client_id: env.GOOGLE_CLIENT_ID,
+          client_secret: env.GOOGLE_CLIENT_SECRET,
+          redirect_uri: redirectUri,
+          grant_type: "authorization_code"
+        })
+      });
+      const j = await r.json().catch(() => null);
+      const perfil = lerJwt(j?.id_token);
+      const valido = r.ok && perfil && perfil.aud === env.GOOGLE_CLIENT_ID && ["accounts.google.com", "https://accounts.google.com"].includes(perfil.iss) && perfil.exp * 1e3 > Date.now() && perfil.sub && perfil.email_verified !== false;
+      if (!valido) return Response.redirect(`${volta}#login_erro=google`, 302);
+      const usuarioId = await salvarUsuarioGoogle(env.DB, perfil);
+      const codigo = aleatorio(24);
+      await env.TOKENS.put(`login:${await sha256(codigo)}`, usuarioId, { expirationTtl: 120 });
+      return Response.redirect(`${volta}#login=${codigo}`, 302);
+    }
+    if (url.pathname === "/api/auth/trocar" && req.method === "POST") {
+      const corpo = await req.json().catch(() => ({}));
+      const chave = `login:${await sha256(String(corpo.codigo || ""))}`;
+      const usuarioId = await env.TOKENS.get(chave);
+      if (!usuarioId) throw new ErroConta("Este c\xF3digo de login venceu. Entre de novo.", 401);
+      await env.TOKENS.delete(chave);
+      const sessao = await criarSessao(env.DB, usuarioId);
+      const u = await env.DB.prepare("SELECT id, nome, email, foto FROM usuarios WHERE id = ?").bind(usuarioId).first();
+      return json({ sessao, usuario: publico(u) }, 200, cabecalhos2);
+    }
+    const usuario = await usuarioDaSessao(req, env.DB);
+    if (!usuario) return json({ erro: "Sua sess\xE3o terminou. Entre de novo." }, 401, cabecalhos2);
+    if (url.pathname === "/api/auth/sair" && req.method === "POST") {
+      await env.DB.prepare("DELETE FROM sessoes WHERE token_hash = ?").bind(usuario.token_hash).run();
+      return json({ ok: true }, 200, cabecalhos2);
+    }
+    if (url.pathname === "/api/conta" && req.method === "GET") {
+      const d = await env.DB.prepare("SELECT conteudo, versao, atualizado_em FROM dados WHERE usuario_id = ?").bind(usuario.id).first();
+      return json(
+        { usuario: publico(usuario), dados: d ? { conteudo: JSON.parse(d.conteudo), versao: d.versao, atualizadoEm: d.atualizado_em } : null },
+        200,
+        cabecalhos2
+      );
+    }
+    if (url.pathname === "/api/conta" && req.method === "DELETE") {
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM dados WHERE usuario_id = ?").bind(usuario.id),
+        env.DB.prepare("DELETE FROM sessoes WHERE usuario_id = ?").bind(usuario.id),
+        env.DB.prepare("DELETE FROM usuarios WHERE id = ?").bind(usuario.id)
+      ]);
+      return json({ ok: true, apagada: true }, 200, cabecalhos2);
+    }
+    if (url.pathname === "/api/conta/dados" && req.method === "PUT") {
+      const texto = await req.text();
+      if (texto.length > LIMITE_DADOS) throw new ErroConta("Seus salvos passaram do limite. Apague alguns e tente de novo.", 413);
+      let corpo;
+      try {
+        corpo = JSON.parse(texto);
+      } catch (_) {
+        throw new ErroConta("Dados inv\xE1lidos.", 400);
+      }
+      if (!corpo || typeof corpo.conteudo !== "object") throw new ErroConta("Dados inv\xE1lidos.", 400);
+      const atual = await env.DB.prepare("SELECT conteudo, versao FROM dados WHERE usuario_id = ?").bind(usuario.id).first();
+      const versaoAtual = atual?.versao || 0;
+      if ((corpo.versaoBase || 0) !== versaoAtual) {
+        return json({ erro: "conflito", conteudo: atual ? JSON.parse(atual.conteudo) : null, versao: versaoAtual }, 409, cabecalhos2);
+      }
+      const nova = versaoAtual + 1;
+      const agora = Date.now();
+      await env.DB.prepare(
+        "INSERT INTO dados (usuario_id, conteudo, versao, atualizado_em) VALUES (?, ?, ?, ?) ON CONFLICT (usuario_id) DO UPDATE SET conteudo = excluded.conteudo, versao = excluded.versao, atualizado_em = excluded.atualizado_em"
+      ).bind(usuario.id, JSON.stringify(corpo.conteudo), nova, agora).run();
+      return json({ ok: true, versao: nova, atualizadoEm: agora }, 200, cabecalhos2);
+    }
+    return json({ erro: "Use outro m\xE9todo neste endere\xE7o." }, 405, cabecalhos2);
+  } catch (e) {
+    const status = e instanceof ErroConta ? e.status : 500;
+    const mensagem = e instanceof ErroConta ? e.message : "Erro inesperado na conta.";
+    if (url.pathname === "/api/auth/google/retorno" || url.pathname === "/api/auth/google") {
+      return new Response(
+        `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Login</title><body style="font:16px/1.5 system-ui,sans-serif;max-width:520px;margin:48px auto;padding:0 16px"><h1 style="font-size:22px">N\xE3o deu para entrar</h1><p>${mensagem}</p></body>`,
+        { status, headers: { "content-type": "text/html; charset=utf-8" } }
+      );
+    }
+    return json({ erro: mensagem }, status, cabecalhos2);
+  }
+}
+
 // worker/src/index.js
 var fonteAtiva = (env) => env.SERPAPI_KEY ? "google" : env.ML_CLIENT_ID && env.ML_CLIENT_SECRET ? "mercadolivre" : null;
 function cors(env, req) {
@@ -576,12 +779,13 @@ function cors(env, req) {
   const permitida = permitidas.includes("*") ? "*" : permitidas.includes(origem) ? origem : permitidas[0];
   return {
     "access-control-allow-origin": permitida,
-    "access-control-allow-methods": "GET, OPTIONS",
-    "access-control-allow-headers": "content-type",
+    "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "access-control-allow-headers": "content-type, authorization",
+    "access-control-max-age": "86400",
     vary: "origin"
   };
 }
-var json = (dados, status, extra) => new Response(JSON.stringify(dados), {
+var json2 = (dados, status, extra) => new Response(JSON.stringify(dados), {
   status,
   headers: { "content-type": "application/json; charset=utf-8", ...extra }
 });
@@ -589,9 +793,11 @@ async function tratar(req, env, ctx = {}, fetcher = fetch) {
   const url = new URL(req.url);
   const cabecalhos2 = cors(env, req);
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cabecalhos2 });
-  if (req.method !== "GET") return json({ erro: "Use GET." }, 405, cabecalhos2);
+  const daConta = await tratarConta(req, env, url, fetcher, cabecalhos2);
+  if (daConta) return daConta;
+  if (req.method !== "GET") return json2({ erro: "Use GET." }, 405, cabecalhos2);
   if (url.pathname === "/" || url.pathname === "") {
-    return json({ servico: "Minhas Compras", rotas: ["/api/saude", "/api/buscar?q=produto", "/api/lojas?token=...", "/api/diagnostico"] }, 200, cabecalhos2);
+    return json2({ servico: "Minhas Compras", rotas: ["/api/saude", "/api/buscar?q=produto", "/api/lojas?token=...", "/api/diagnostico", "/api/auth/google", "/api/conta"] }, 200, cabecalhos2);
   }
   if (url.pathname === "/api/conectar" || url.pathname === "/api/retorno") {
     const pagina = (titulo, texto, status = 200) => new Response(
@@ -615,23 +821,29 @@ async function tratar(req, env, ctx = {}, fetcher = fetch) {
   if (url.pathname === "/api/diagnostico") {
     const passos = [...await diagnosticarGoogle(env, fetcher)];
     if (env.ML_CLIENT_ID) passos.push(...await diagnosticarML(env, fetcher));
-    return json({ fontePrincipal: fonteAtiva(env), passos }, 200, cabecalhos2);
+    return json2({ fontePrincipal: fonteAtiva(env), passos }, 200, cabecalhos2);
   }
   if (url.pathname === "/api/saude") {
-    return json(
-      { ok: true, fonte: fonteAtiva(env), google: Boolean(env.SERPAPI_KEY), mercadolivre: Boolean(env.ML_CLIENT_ID && env.ML_CLIENT_SECRET) },
+    return json2(
+      {
+        ok: true,
+        fonte: fonteAtiva(env),
+        google: Boolean(env.SERPAPI_KEY),
+        mercadolivre: Boolean(env.ML_CLIENT_ID && env.ML_CLIENT_SECRET),
+        conta: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.DB && env.TOKENS)
+      },
       200,
       cabecalhos2
     );
   }
   if (url.pathname === "/api/lojas") {
     const token = (url.searchParams.get("token") || "").trim();
-    if (token.length < 10 || token.length > 4e3) return json({ erro: "C\xF3digo do produto inv\xE1lido." }, 400, cabecalhos2);
+    if (token.length < 10 || token.length > 4e3) return json2({ erro: "C\xF3digo do produto inv\xE1lido." }, 400, cabecalhos2);
     const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)))].map((b) => b.toString(16).padStart(2, "0")).join("");
     const chaveCache = `lojas:${hash}`;
     if (env.TOKENS) {
       const salvo = await env.TOKENS.get(chaveCache, "json").catch(() => null);
-      if (salvo) return json({ ...salvo, doCache: true }, 200, cabecalhos2);
+      if (salvo) return json2({ ...salvo, doCache: true }, 200, cabecalhos2);
     }
     try {
       const corpo = { ...await buscarLojasDoProduto(token, { env, fetcher }), verificadoEm: (/* @__PURE__ */ new Date()).toISOString() };
@@ -641,25 +853,25 @@ async function tratar(req, env, ctx = {}, fetcher = fetch) {
         if (ctx.waitUntil) ctx.waitUntil(gravar);
         else await gravar;
       }
-      return json(corpo, 200, cabecalhos2);
+      return json2(corpo, 200, cabecalhos2);
     } catch (e) {
       const status = e instanceof ErroDeFonte ? e.status : 500;
-      return json({ erro: e instanceof ErroDeFonte ? e.message : "Erro inesperado no servidor." }, status, cabecalhos2);
+      return json2({ erro: e instanceof ErroDeFonte ? e.message : "Erro inesperado no servidor." }, status, cabecalhos2);
     }
   }
   if (url.pathname === "/api/buscar") {
     const q = (url.searchParams.get("q") || "").trim().replace(/\s+/g, " ").slice(0, 120);
-    if (q.length < 2) return json({ erro: "Digite pelo menos 2 letras para buscar." }, 400, cabecalhos2);
+    if (q.length < 2) return json2({ erro: "Digite pelo menos 2 letras para buscar." }, 400, cabecalhos2);
     const cep = (url.searchParams.get("cep") || "").replace(/\D/g, "").slice(0, 8);
     const fonte = fonteAtiva(env);
-    if (!fonte) return json({ erro: "O servidor ainda n\xE3o tem nenhuma fonte de pre\xE7os configurada." }, 503, cabecalhos2);
+    if (!fonte) return json2({ erro: "O servidor ainda n\xE3o tem nenhuma fonte de pre\xE7os configurada." }, 503, cabecalhos2);
     const local = cep.length === 8 ? await localDoCep(cep, { env, fetcher }).catch(() => null) : null;
     const location = local?.location || "Brazil";
     const chaveCache = `busca:${fonte}:${q.toLowerCase()}:${fonte === "mercadolivre" ? cep : location}`;
     const horas = Math.max(0.1, Number(env.CACHE_HORAS) || 6);
     if (env.TOKENS) {
       const salvo = await env.TOKENS.get(chaveCache, "json").catch(() => null);
-      if (salvo) return json({ ...salvo, doCache: true }, 200, { ...cabecalhos2, "cache-control": "public, max-age=300" });
+      if (salvo) return json2({ ...salvo, doCache: true }, 200, { ...cabecalhos2, "cache-control": "public, max-age=300" });
     }
     try {
       const { itens, filtros } = fonte === "google" ? await buscarGoogle(q, { env, fetcher, location }) : { itens: await buscarML(q, { env, cep, fetcher }), filtros: [] };
@@ -669,13 +881,13 @@ async function tratar(req, env, ctx = {}, fetcher = fetch) {
         if (ctx.waitUntil) ctx.waitUntil(gravar);
         else await gravar;
       }
-      return json(corpo, 200, { ...cabecalhos2, "cache-control": "public, max-age=300" });
+      return json2(corpo, 200, { ...cabecalhos2, "cache-control": "public, max-age=300" });
     } catch (e) {
       const status = e instanceof ErroDeFonte ? e.status : 500;
-      return json({ erro: e instanceof ErroDeFonte ? e.message : "Erro inesperado no servidor." }, status, cabecalhos2);
+      return json2({ erro: e instanceof ErroDeFonte ? e.message : "Erro inesperado no servidor." }, status, cabecalhos2);
     }
   }
-  return json({ erro: "Endere\xE7o n\xE3o encontrado." }, 404, cabecalhos2);
+  return json2({ erro: "Endere\xE7o n\xE3o encontrado." }, 404, cabecalhos2);
 }
 var src_default = {
   fetch: (req, env, ctx) => tratar(req, env, ctx)

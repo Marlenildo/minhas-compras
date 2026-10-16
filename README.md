@@ -61,17 +61,23 @@ O app (`app/`) e o servidor (`worker/`) ficam no mesmo Worker, `minhas-compras-a
 
 Sem a conexão com o GitHub, dá para publicar à mão com `npx wrangler deploy` na raiz do projeto.
 
-## Contas
+## Favoritos, listas e conta
 
-Hoje o app funciona **sem conta**: as preferências ficam salvas só no aparelho.
+- **Sem conta:** favoritos, listas, quantidades, CEP e preferências ficam no aparelho (localStorage).
+- **Com conta (entrar com Google):** o mesmo conteúdo vai para o banco D1 do Cloudflare e aparece em qualquer aparelho. O aparelho continua com uma cópia, então o app funciona sem internet e sincroniza quando a conexão volta.
+- O Google só identifica a pessoa (nome, e-mail, foto). Nada do Gmail ou Drive.
+- **Login:** `/api/auth/google` → Google → `/api/auth/google/retorno` → volta ao app com um código de uso único (`#login=...`, 2 minutos) → `POST /api/auth/trocar` devolve a sessão (90 dias; no banco fica só o hash).
+- **Sincronização:** `GET /api/conta` e `PUT /api/conta/dados` com número de versão. Se outro aparelho salvou antes, o servidor responde 409 e o app junta os dois lados (`juntarConteudo`, em `app/src/salvos.js`): nada se perde, e o que foi apagado num aparelho não volta pelo outro.
+- **Sair** (`POST /api/auth/sair`) encerra a sessão do aparelho. **Apagar minha conta** (`DELETE /api/conta`) apaga usuário, sessões e dados.
+- Política de privacidade: `app/privacidade.html`.
 
-A conta será opcional (login com Google ou link por e-mail, via Supabase) e servirá para salvar produtos em qualquer aparelho, montar a lista do mês e receber aviso quando o preço cair.
+Configuração no Cloudflare: banco D1 ligado como `DB`, KV como `TOKENS`, segredos `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET`. No Google Cloud, o URI de redirecionamento é `https://minhas-compras-api.marlenildo.workers.dev/api/auth/google/retorno`.
 
 ## Próximos passos
 
 1. Conferir os resultados reais e ajustar a leitura de tamanhos.
 2. Histórico de preço e alerta de queda.
-3. Contas opcionais e lista do mês.
+3. Alerta de queda de preço para os salvos.
 4. Mais fontes por API oficial ou afiliados (Amazon Creators API, Awin). Sem raspar sites.
 
 ## Princípio

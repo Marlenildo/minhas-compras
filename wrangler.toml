@@ -14,9 +14,18 @@ directory = "./app"
 [vars]
 ORIGENS_PERMITIDAS = "*"
 CACHE_HORAS = "6"
+# Endereços do app para onde o login com Google pode voltar (separados por vírgula)
+ORIGENS_APP = "https://minhas-compras.marlenildo.online"
 
 # Armazenamento do cache e dos tokens. Troque pelo ID do namespace "minhas-compras-tokens"
 # (Cloudflare → Storage & Databases → Workers KV → copie o ID).
 [[kv_namespaces]]
 binding = "TOKENS"
 id = "COLE_AQUI_O_ID_DO_KV"
+
+# Banco das contas (usuários, sessões, salvos). Troque pelo ID do banco D1 "minhas-compras"
+# (Cloudflare → Storage & Databases → D1 → copie o Database ID). As tabelas são criadas sozinhas.
+[[d1_databases]]
+binding = "DB"
+database_name = "minhas-compras"
+database_id = "COLE_AQUI_O_ID_DO_D1"
