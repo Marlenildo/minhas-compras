@@ -1,7 +1,7 @@
 // Servidor de busca do Minhas Compras (Cloudflare Worker).
 // GET /api/buscar?q=sabonete+liquido&cep=58397000  → anúncios no formato comum
 // GET /api/saude                                    → confere se o servidor está de pé
-import { buscarML, diagnosticarML, ErroDeFonte } from './mercadolivre.js';
+import { buscarML, diagnosticarML, iniciarConexao, concluirConexao, ErroDeFonte } from './mercadolivre.js';
 
 const CACHE_SEGUNDOS = 600;
 
@@ -31,6 +31,29 @@ export async function tratar(req, env, ctx = {}, fetcher = fetch) {
 
   if (url.pathname === '/' || url.pathname === '') {
     return json({ servico: 'Minhas Compras', rotas: ['/api/saude', '/api/buscar?q=produto&cep=00000000', '/api/diagnostico'] }, 200, cabecalhos);
+  }
+
+  // Conexão da conta do dono ao Mercado Livre (feita uma vez)
+  if (url.pathname === '/api/conectar' || url.pathname === '/api/retorno') {
+    const pagina = (titulo, texto, status = 200) =>
+      new Response(
+        `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${titulo}</title>` +
+          `<body style="font:16px/1.5 system-ui,sans-serif;max-width:560px;margin:48px auto;padding:0 16px"><h1 style="font-size:22px">${titulo}</h1><p>${texto}</p></body>`,
+        { status, headers: { 'content-type': 'text/html; charset=utf-8' } }
+      );
+    if (!env.TOKENS) return pagina('Falta o armazenamento', 'Crie um namespace KV e ligue ao servidor com o nome TOKENS.', 503);
+    if (!env.ADMIN_CHAVE) return pagina('Falta a senha de administrador', 'Cadastre o segredo ADMIN_CHAVE no servidor.', 503);
+    const redirectUri = `${url.origin}/api/retorno`;
+    if (url.pathname === '/api/conectar') {
+      if (url.searchParams.get('chave') !== env.ADMIN_CHAVE) return pagina('Senha incorreta', 'Use /api/conectar?chave=SUA_SENHA, com a senha cadastrada em ADMIN_CHAVE.', 403);
+      return Response.redirect(await iniciarConexao(env, redirectUri), 302);
+    }
+    try {
+      await concluirConexao(env, { code: url.searchParams.get('code'), state: url.searchParams.get('state'), redirectUri }, fetcher);
+      return pagina('Conectado ao Mercado Livre', 'Pronto. O servidor vai renovar este acesso sozinho. Pode fechar esta página e voltar para o chat.');
+    } catch (e) {
+      return pagina('A conexão não deu certo', e instanceof ErroDeFonte ? e.message : 'Erro inesperado.', e.status || 500);
+    }
   }
 
   if (url.pathname === '/api/diagnostico') {

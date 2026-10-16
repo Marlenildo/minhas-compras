@@ -114,27 +114,71 @@ function normalizarItemML(item) {
   };
 }
 var tokenEmCache = null;
+var AUTORIZACAO = "https://auth.mercadolivre.com.br/authorization";
+async function pedirToken(campos, env, fetcher) {
+  const r = await fetcher(`${API}/oauth/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    body: new URLSearchParams({ client_id: env.ML_CLIENT_ID, client_secret: env.ML_CLIENT_SECRET, ...campos })
+  });
+  const json2 = await r.json().catch(() => null);
+  return { ok: r.ok, status: r.status, json: json2 };
+}
+function guardarEmCache(j, tipo) {
+  tokenEmCache = { valor: j.access_token, tipo, expira: Date.now() + Math.max(60, (j.expires_in || 21600) - 300) * 1e3 };
+  return tokenEmCache;
+}
 async function obterToken(env, fetcher = fetch) {
   if (tokenEmCache && tokenEmCache.expira > Date.now()) return tokenEmCache.valor;
   if (!env.ML_CLIENT_ID || !env.ML_CLIENT_SECRET) {
     throw new ErroDeFonte("O servidor ainda n\xE3o tem as chaves do Mercado Livre (ML_CLIENT_ID e ML_CLIENT_SECRET).", 503);
   }
-  const r = await fetcher(`${API}/oauth/token`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-    body: new URLSearchParams({
-      grant_type: "client_credentials",
-      client_id: env.ML_CLIENT_ID,
-      client_secret: env.ML_CLIENT_SECRET
-    })
-  });
+  if (env.TOKENS) {
+    const salvo = await env.TOKENS.get("ml_acesso", "json").catch(() => null);
+    if (salvo && salvo.expira > Date.now()) {
+      tokenEmCache = salvo;
+      return salvo.valor;
+    }
+    const refresh = await env.TOKENS.get("ml_refresh").catch(() => null);
+    if (refresh) {
+      const r2 = await pedirToken({ grant_type: "refresh_token", refresh_token: refresh }, env, fetcher);
+      if (r2.ok && r2.json?.access_token) {
+        const t = guardarEmCache(r2.json, "usuario");
+        if (r2.json.refresh_token) await env.TOKENS.put("ml_refresh", r2.json.refresh_token);
+        await env.TOKENS.put("ml_acesso", JSON.stringify(t), { expirationTtl: Math.max(60, Math.floor((t.expira - Date.now()) / 1e3)) });
+        return t.valor;
+      }
+    }
+  }
+  const r = await pedirToken({ grant_type: "client_credentials" }, env, fetcher);
   if (!r.ok) throw new ErroDeFonte(`O Mercado Livre recusou as chaves do aplicativo (HTTP ${r.status}).`, 502);
-  const j = await r.json();
-  tokenEmCache = { valor: j.access_token, expira: Date.now() + Math.max(60, (j.expires_in || 21600) - 300) * 1e3 };
-  return tokenEmCache.valor;
+  return guardarEmCache(r.json, "aplicativo").valor;
 }
+var tipoDoToken = () => tokenEmCache?.tipo || null;
 function limparTokenEmCache() {
   tokenEmCache = null;
+}
+async function iniciarConexao(env, redirectUri) {
+  const estado = crypto.randomUUID();
+  await env.TOKENS.put(`estado:${estado}`, "1", { expirationTtl: 600 });
+  return `${AUTORIZACAO}?${new URLSearchParams({ response_type: "code", client_id: env.ML_CLIENT_ID, redirect_uri: redirectUri, state: estado })}`;
+}
+async function concluirConexao(env, { code, state, redirectUri }, fetcher = fetch) {
+  if (!state || !await env.TOKENS.get(`estado:${state}`)) {
+    throw new ErroDeFonte("Este link de autoriza\xE7\xE3o venceu ou n\xE3o foi gerado por este servidor. Comece de novo pelo /api/conectar.", 400);
+  }
+  await env.TOKENS.delete(`estado:${state}`);
+  const r = await pedirToken({ grant_type: "authorization_code", code, redirect_uri: redirectUri }, env, fetcher);
+  if (!r.ok || !r.json?.refresh_token) {
+    const detalhe = r.json?.message || r.json?.error || `HTTP ${r.status}`;
+    throw new ErroDeFonte(
+      `O Mercado Livre n\xE3o entregou a autoriza\xE7\xE3o (${detalhe}). Confira se o fluxo "Refresh Token" est\xE1 marcado no aplicativo e se a URI de redirecionamento \xE9 exatamente ${redirectUri}.`,
+      502
+    );
+  }
+  await env.TOKENS.put("ml_refresh", r.json.refresh_token);
+  const t = guardarEmCache(r.json, "usuario");
+  await env.TOKENS.put("ml_acesso", JSON.stringify(t), { expirationTtl: Math.max(60, Math.floor((t.expira - Date.now()) / 1e3)) });
 }
 var ErroDeFonte = class extends Error {
   constructor(mensagem, status = 502) {
@@ -231,7 +275,7 @@ async function diagnosticarML(env, fetcher = fetch) {
   let token;
   try {
     token = await obterToken(env, fetcher);
-    passos.push({ etapa: "chaves do aplicativo (token)", status: 200, ok: true });
+    passos.push({ etapa: `chaves do aplicativo (token de ${tipoDoToken() === "usuario" ? "usu\xE1rio" : "aplicativo"})`, status: 200, ok: true });
   } catch (e) {
     passos.push({ etapa: "chaves do aplicativo (token)", ok: false, mensagem: e.message });
     return passos;
@@ -279,6 +323,25 @@ async function tratar(req, env, ctx = {}, fetcher = fetch) {
   if (req.method !== "GET") return json({ erro: "Use GET." }, 405, cabecalhos2);
   if (url.pathname === "/" || url.pathname === "") {
     return json({ servico: "Minhas Compras", rotas: ["/api/saude", "/api/buscar?q=produto&cep=00000000", "/api/diagnostico"] }, 200, cabecalhos2);
+  }
+  if (url.pathname === "/api/conectar" || url.pathname === "/api/retorno") {
+    const pagina = (titulo, texto, status = 200) => new Response(
+      `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${titulo}</title><body style="font:16px/1.5 system-ui,sans-serif;max-width:560px;margin:48px auto;padding:0 16px"><h1 style="font-size:22px">${titulo}</h1><p>${texto}</p></body>`,
+      { status, headers: { "content-type": "text/html; charset=utf-8" } }
+    );
+    if (!env.TOKENS) return pagina("Falta o armazenamento", "Crie um namespace KV e ligue ao servidor com o nome TOKENS.", 503);
+    if (!env.ADMIN_CHAVE) return pagina("Falta a senha de administrador", "Cadastre o segredo ADMIN_CHAVE no servidor.", 503);
+    const redirectUri = `${url.origin}/api/retorno`;
+    if (url.pathname === "/api/conectar") {
+      if (url.searchParams.get("chave") !== env.ADMIN_CHAVE) return pagina("Senha incorreta", "Use /api/conectar?chave=SUA_SENHA, com a senha cadastrada em ADMIN_CHAVE.", 403);
+      return Response.redirect(await iniciarConexao(env, redirectUri), 302);
+    }
+    try {
+      await concluirConexao(env, { code: url.searchParams.get("code"), state: url.searchParams.get("state"), redirectUri }, fetcher);
+      return pagina("Conectado ao Mercado Livre", "Pronto. O servidor vai renovar este acesso sozinho. Pode fechar esta p\xE1gina e voltar para o chat.");
+    } catch (e) {
+      return pagina("A conex\xE3o n\xE3o deu certo", e instanceof ErroDeFonte ? e.message : "Erro inesperado.", e.status || 500);
+    }
   }
   if (url.pathname === "/api/diagnostico") {
     return json({ passos: await diagnosticarML(env, fetcher) }, 200, cabecalhos2);

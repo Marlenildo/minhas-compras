@@ -73,30 +73,89 @@ export function normalizarItemML(item) {
 // ---------------------------------------------------------------------------
 
 let tokenEmCache = null;
+const AUTORIZACAO = 'https://auth.mercadolivre.com.br/authorization';
 
-/** Token de aplicativo (client credentials). Dura ~6 h; renovamos com folga. */
+async function pedirToken(campos, env, fetcher) {
+  const r = await fetcher(`${API}/oauth/token`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+    body: new URLSearchParams({ client_id: env.ML_CLIENT_ID, client_secret: env.ML_CLIENT_SECRET, ...campos }),
+  });
+  const json = await r.json().catch(() => null);
+  return { ok: r.ok, status: r.status, json };
+}
+
+function guardarEmCache(j, tipo) {
+  tokenEmCache = { valor: j.access_token, tipo, expira: Date.now() + Math.max(60, (j.expires_in || 21600) - 300) * 1000 };
+  return tokenEmCache;
+}
+
+/**
+ * Token para chamar a API.
+ * 1. Se a conta do dono já autorizou o app (refresh token guardado no KV TOKENS), usa token de usuário.
+ * 2. Senão, usa token de aplicativo (client credentials).
+ * O token de usuário também fica no KV, para todas as cópias do servidor usarem o mesmo.
+ */
 export async function obterToken(env, fetcher = fetch) {
   if (tokenEmCache && tokenEmCache.expira > Date.now()) return tokenEmCache.valor;
   if (!env.ML_CLIENT_ID || !env.ML_CLIENT_SECRET) {
     throw new ErroDeFonte('O servidor ainda não tem as chaves do Mercado Livre (ML_CLIENT_ID e ML_CLIENT_SECRET).', 503);
   }
-  const r = await fetcher(`${API}/oauth/token`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
-    body: new URLSearchParams({
-      grant_type: 'client_credentials',
-      client_id: env.ML_CLIENT_ID,
-      client_secret: env.ML_CLIENT_SECRET,
-    }),
-  });
+
+  if (env.TOKENS) {
+    const salvo = await env.TOKENS.get('ml_acesso', 'json').catch(() => null);
+    if (salvo && salvo.expira > Date.now()) {
+      tokenEmCache = salvo;
+      return salvo.valor;
+    }
+    const refresh = await env.TOKENS.get('ml_refresh').catch(() => null);
+    if (refresh) {
+      const r = await pedirToken({ grant_type: 'refresh_token', refresh_token: refresh }, env, fetcher);
+      if (r.ok && r.json?.access_token) {
+        const t = guardarEmCache(r.json, 'usuario');
+        if (r.json.refresh_token) await env.TOKENS.put('ml_refresh', r.json.refresh_token);
+        await env.TOKENS.put('ml_acesso', JSON.stringify(t), { expirationTtl: Math.max(60, Math.floor((t.expira - Date.now()) / 1000)) });
+        return t.valor;
+      }
+      // Autorização vencida ou revogada: segue com o token de aplicativo
+    }
+  }
+
+  const r = await pedirToken({ grant_type: 'client_credentials' }, env, fetcher);
   if (!r.ok) throw new ErroDeFonte(`O Mercado Livre recusou as chaves do aplicativo (HTTP ${r.status}).`, 502);
-  const j = await r.json();
-  tokenEmCache = { valor: j.access_token, expira: Date.now() + Math.max(60, (j.expires_in || 21600) - 300) * 1000 };
-  return tokenEmCache.valor;
+  return guardarEmCache(r.json, 'aplicativo').valor;
 }
+
+export const tipoDoToken = () => tokenEmCache?.tipo || null;
 
 export function limparTokenEmCache() {
   tokenEmCache = null;
+}
+
+/** Endereço de autorização do Mercado Livre, com um código de uso único guardado por 10 minutos. */
+export async function iniciarConexao(env, redirectUri) {
+  const estado = crypto.randomUUID();
+  await env.TOKENS.put(`estado:${estado}`, '1', { expirationTtl: 600 });
+  return `${AUTORIZACAO}?${new URLSearchParams({ response_type: 'code', client_id: env.ML_CLIENT_ID, redirect_uri: redirectUri, state: estado })}`;
+}
+
+/** Recebe o código da autorização, troca por tokens e guarda o refresh token. */
+export async function concluirConexao(env, { code, state, redirectUri }, fetcher = fetch) {
+  if (!state || !(await env.TOKENS.get(`estado:${state}`))) {
+    throw new ErroDeFonte('Este link de autorização venceu ou não foi gerado por este servidor. Comece de novo pelo /api/conectar.', 400);
+  }
+  await env.TOKENS.delete(`estado:${state}`);
+  const r = await pedirToken({ grant_type: 'authorization_code', code, redirect_uri: redirectUri }, env, fetcher);
+  if (!r.ok || !r.json?.refresh_token) {
+    const detalhe = r.json?.message || r.json?.error || `HTTP ${r.status}`;
+    throw new ErroDeFonte(
+      `O Mercado Livre não entregou a autorização (${detalhe}). Confira se o fluxo "Refresh Token" está marcado no aplicativo e se a URI de redirecionamento é exatamente ${redirectUri}.`,
+      502
+    );
+  }
+  await env.TOKENS.put('ml_refresh', r.json.refresh_token);
+  const t = guardarEmCache(r.json, 'usuario');
+  await env.TOKENS.put('ml_acesso', JSON.stringify(t), { expirationTtl: Math.max(60, Math.floor((t.expira - Date.now()) / 1000)) });
 }
 
 export class ErroDeFonte extends Error {
@@ -213,7 +272,7 @@ export async function diagnosticarML(env, fetcher = fetch) {
   let token;
   try {
     token = await obterToken(env, fetcher);
-    passos.push({ etapa: 'chaves do aplicativo (token)', status: 200, ok: true });
+    passos.push({ etapa: `chaves do aplicativo (token de ${tipoDoToken() === 'usuario' ? 'usuário' : 'aplicativo'})`, status: 200, ok: true });
   } catch (e) {
     passos.push({ etapa: 'chaves do aplicativo (token)', ok: false, mensagem: e.message });
     return passos;

@@ -160,3 +160,70 @@ test('diagnóstico mostra o resultado de cada rota sem expor as chaves', async (
   assert.deepEqual(passos.map((p) => p.ok), [true, false, true, true, true, true]);
   assert.equal(passos[1].mensagem, 'forbidden');
 });
+
+class KVFalso {
+  constructor() { this.m = new Map(); }
+  async get(k, tipo) { const v = this.m.get(k); return v == null ? null : tipo === 'json' ? JSON.parse(v) : v; }
+  async put(k, v) { this.m.set(k, v); }
+  async delete(k) { this.m.delete(k); }
+}
+
+test('conectar exige a senha e leva à autorização do Mercado Livre', async () => {
+  const kv = new KVFalso();
+  const e = { ...env, TOKENS: kv, ADMIN_CHAVE: 'minha-senha' };
+  const errada = await tratar(new Request('https://api.exemplo/api/conectar?chave=outra'), e, {}, fetchFalso([]));
+  assert.equal(errada.status, 403);
+  const r = await tratar(new Request('https://api.exemplo/api/conectar?chave=minha-senha'), e, {}, fetchFalso([]));
+  assert.equal(r.status, 302);
+  const destino = new URL(r.headers.get('location'));
+  assert.equal(destino.host, 'auth.mercadolivre.com.br');
+  assert.equal(destino.searchParams.get('redirect_uri'), 'https://api.exemplo/api/retorno');
+  assert.ok(await kv.get(`estado:${destino.searchParams.get('state')}`));
+});
+
+test('retorno troca o código, guarda o acesso e a busca passa a usar token de usuário', async () => {
+  const kv = new KVFalso();
+  const e = { ...env, TOKENS: kv, ADMIN_CHAVE: 'minha-senha' };
+  const r1 = await tratar(new Request('https://api.exemplo/api/conectar?chave=minha-senha'), e, {}, fetchFalso([]));
+  const estado = new URL(r1.headers.get('location')).searchParams.get('state');
+
+  const f = fetchFalso([['/oauth/token', { access_token: 'USUARIO-1', refresh_token: 'R1', expires_in: 21600 }]]);
+  const r2 = await tratar(new Request(`https://api.exemplo/api/retorno?code=ABC&state=${estado}`), e, {}, f);
+  assert.equal(r2.status, 200);
+  assert.match(await r2.text(), /Conectado ao Mercado Livre/);
+  assert.equal(await kv.get('ml_refresh'), 'R1');
+  const corpo = String(f.chamadas[0].opcoes.body);
+  assert.match(corpo, /grant_type=authorization_code/);
+  assert.match(corpo, /code=ABC/);
+
+  // Estado já usado não vale de novo
+  const r3 = await tratar(new Request(`https://api.exemplo/api/retorno?code=ABC&state=${estado}`), e, {}, f);
+  assert.equal(r3.status, 400);
+
+  // A busca usa o token de usuário guardado
+  limparTokenEmCache();
+  const fb = fetchFalso([['/sites/MLB/search', { results: [itemML()] }]]);
+  const r4 = await tratar(new Request('https://api.exemplo/api/buscar?q=sabonete'), e, {}, fb);
+  assert.equal(r4.status, 200);
+  assert.equal(fb.chamadas.find((c) => c.url.includes('/sites/MLB/search')).opcoes.headers.authorization, 'Bearer USUARIO-1');
+});
+
+test('com o acesso vencido, renova pelo refresh token e guarda o novo', async () => {
+  const kv = new KVFalso();
+  await kv.put('ml_refresh', 'R1');
+  const e = { ...env, TOKENS: kv };
+  const f = fetchFalso([
+    ['/oauth/token', { access_token: 'USUARIO-2', refresh_token: 'R2', expires_in: 21600 }],
+    ['/sites/MLB/search', { results: [] }],
+  ]);
+  const r = await tratar(new Request('https://api.exemplo/api/buscar?q=sabonete'), e, {}, f);
+  assert.equal(r.status, 200);
+  assert.match(String(f.chamadas[0].opcoes.body), /grant_type=refresh_token/);
+  assert.equal(await kv.get('ml_refresh'), 'R2');
+});
+
+test('sem KV ou sem senha, conectar explica o que falta', async () => {
+  const r = await tratar(new Request('https://api.exemplo/api/conectar?chave=x'), env, {}, fetchFalso([]));
+  assert.equal(r.status, 503);
+  assert.match(await r.text(), /TOKENS/);
+});
