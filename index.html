@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Minhas Compras</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Descubra a compra de menor custo real por litro, quilo ou unidade, somando frete, kits e descontos.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: duas colunas no computador (ofertas à esquerda, etiqueta da melhor compra fixa à direita);
+   no celular, uma coluna com o resultado logo após o produto. Visual de gôndola: etiqueta amarela de preço por litro e cupom. */
+:root {
+  --bg: #eef3f0;
+  --surface: #ffffff;
+  --ink: #13201a;
+  --muted: #56675f;
+  --line: #d4ded8;
+  --accent: #0d6a4d;
+  --accent-ink: #ffffff;
+  --tag: #ffd84a;
+  --tag-ink: #1c1804;
+  --good: #11764a;
+  --good-bg: #dff1e7;
+  --warn: #8a4b00;
+  --warn-bg: #fff1d6;
+  --danger: #b0322a;
+  --bar: #9fb8ab;
+  --font-display: "Bricolage Grotesque", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --raio: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1512; --surface: #16201b; --ink: #e5eee9; --muted: #95a69d; --line: #2a3a32;
+    --accent: #4fc79c; --accent-ink: #062218; --tag: #ffd84a; --tag-ink: #1c1804;
+    --good: #6fd8a4; --good-bg: #173829; --warn: #f2b25a; --warn-bg: #3a2a10; --danger: #ff8a7e; --bar: #3f5a4d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1512; --surface: #16201b; --ink: #e5eee9; --muted: #95a69d; --line: #2a3a32;
+  --accent: #4fc79c; --accent-ink: #062218; --tag: #ffd84a; --tag-ink: #1c1804;
+  --good: #6fd8a4; --good-bg: #173829; --warn: #f2b25a; --warn-bg: #3a2a10; --danger: #ff8a7e; --bar: #3f5a4d;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+.pagina {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding-block: 28px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid;
+  gap: 24px;
+}
+h1, h2 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Cabeçalho */
+.topo { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; }
+.marca h1 { font-size: clamp(30px, 6vw, 44px); font-weight: 800; font-stretch: 80%; letter-spacing: -0.01em; line-height: 1; }
+.marca p { margin: 8px 0 0; color: var(--muted); max-width: 56ch; }
+.ferramentas { display: flex; gap: 8px; flex-wrap: wrap; }
+.botao-sec {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 999px;
+  padding: 7px 14px; cursor: pointer; font-size: 14px; font-weight: 500;
+}
+.botao-sec:hover { border-color: var(--accent); color: var(--accent); }
+.confirmar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+  background: var(--warn-bg); color: var(--warn); border-radius: var(--raio); padding: 12px 16px;
+}
+.confirmar p { margin: 0; flex: 1 1 260px; font-weight: 500; }
+.confirmar button { border: 0; border-radius: 999px; padding: 7px 14px; cursor: pointer; font-weight: 600; }
+#confirmar-sim { background: var(--danger); color: #fff; }
+#confirmar-nao { background: transparent; color: var(--warn); text-decoration: underline; }
+
+/* Grade principal */
+.principal { display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr); grid-template-areas: "produto" "resultado" "ofertas"; }
+@media (min-width: 900px) {
+  .principal { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); grid-template-areas: "produto resultado" "ofertas resultado"; align-items: start; }
+  .resultado { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); }
+}
+.bloco-produto { grid-area: produto; }
+.resultado { grid-area: resultado; display: grid; gap: 16px; min-width: 0; }
+.bloco-ofertas { grid-area: ofertas; display: grid; gap: 14px; min-width: 0; }
+
+.secao-titulo { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.secao-titulo h2 { font-size: 20px; font-weight: 700; font-stretch: 90%; }
+.eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; }
+.selo { font-size: 12px; font-weight: 600; color: var(--warn); background: var(--warn-bg); padding: 2px 10px; border-radius: 999px; }
+
+/* Campos */
+.cartao { background: var(--surface); border: 1px solid var(--line); border-radius: var(--raio); padding: 16px; }
+.grade { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.grade .meia { grid-column: span 2; }
+.grade .cheia { grid-column: 1 / -1; }
+@media (max-width: 420px) { .grade .meia { grid-column: 1 / -1; } }
+.campo { display: grid; gap: 4px; min-width: 0; align-content: start; }
+.rotulo { font-size: 13px; font-weight: 600; color: var(--muted); }
+.dica { font-size: 12px; color: var(--muted); min-height: 1em; }
+input, select {
+  width: 100%; min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 10px; font-variant-numeric: tabular-nums;
+}
+input:focus, select:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.junto { display: flex; gap: 6px; }
+.junto select { width: auto; flex: 0 0 auto; }
+.produto-grade { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+.produto-grade .cheia { grid-column: 1 / -1; }
+.sufixo { position: relative; }
+.sufixo input { padding-right: 44px; }
+.sufixo span { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 13px; pointer-events: none; }
+
+/* Ofertas */
+.oferta { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--raio); padding: 14px 16px 12px; display: grid; gap: 14px; min-width: 0; }
+.oferta legend { font-family: var(--font-display); font-weight: 700; font-size: 17px; padding: 0 6px; display: flex; align-items: center; gap: 8px; }
+.num { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--ink); color: var(--surface); font: 600 12px var(--font-mono); }
+.faixas { display: grid; gap: 8px; border-top: 1px dashed var(--line); padding-top: 12px; }
+.faixa { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; }
+.faixa input { width: 64px; padding: 6px 8px; }
+.vazio { margin: 0; font-size: 13px; color: var(--muted); }
+.link { background: none; border: 0; padding: 0; color: var(--accent); font-weight: 600; cursor: pointer; justify-self: start; font-size: 14px; }
+.link:hover { text-decoration: underline; }
+.link.perigo { color: var(--danger); font-weight: 500; }
+.acoes-oferta { display: flex; justify-content: flex-end; }
+.icone { border: 1px solid var(--line); background: var(--surface); width: 28px; height: 28px; border-radius: 50%; cursor: pointer; line-height: 1; font-size: 16px; }
+.add {
+  border: 1.5px dashed var(--accent); color: var(--accent); background: transparent; border-radius: var(--raio);
+  padding: 14px; font-weight: 700; cursor: pointer; font-size: 15px;
+}
+.add:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+/* Etiqueta de gôndola */
+.etiqueta {
+  background: var(--tag); color: var(--tag-ink); border-radius: var(--raio) var(--raio) 0 0;
+  padding: 16px 18px 14px; display: grid; gap: 4px; position: relative;
+}
+.etiqueta.vazia { border-radius: var(--raio); }
+.etiqueta.vazia p { margin: 4px 0 0; }
+.etiqueta-topo { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.etiqueta .loja { font-weight: 700; font-size: 14px; }
+.preco-un { display: flex; align-items: baseline; gap: 4px; }
+.preco-un .valor { font-family: var(--font-display); font-weight: 800; font-stretch: 75%; font-size: clamp(44px, 9vw, 64px); line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.preco-un .por { font-family: var(--font-display); font-weight: 700; font-size: 22px; }
+.leve { margin: 2px 0 0; font-size: 15px; }
+.cupom {
+  background: var(--surface); border: 1px solid var(--line); border-top: 0; border-radius: 0 0 var(--raio) var(--raio);
+  padding: 12px 18px 14px; font: 13.5px/1.6 var(--font-mono); font-variant-numeric: tabular-nums;
+  background-image: radial-gradient(circle at 6px -2px, var(--bg) 5px, transparent 5.5px);
+  background-size: 12px 8px; background-repeat: repeat-x;
+}
+.linha { display: flex; justify-content: space-between; gap: 12px; }
+.linha span:first-child { min-width: 0; }
+.linha span:last-child { white-space: nowrap; }
+.linha.total { border-top: 1px dashed var(--line); margin-top: 6px; padding-top: 6px; font-weight: 600; font-size: 15px; }
+.dicas { margin: 0; padding: 12px 16px 12px 34px; background: var(--good-bg); color: var(--good); border-radius: var(--raio); font-weight: 500; display: grid; gap: 4px; }
+.economia { margin: 0; color: var(--muted); font-size: 14px; }
+.botao { display: inline-block; text-align: center; background: var(--accent); color: var(--accent-ink); text-decoration: none; font-weight: 700; padding: 11px 18px; border-radius: 999px; }
+.botao:hover { filter: brightness(1.08); }
+#vencedor { display: grid; gap: 12px; }
+#vencedor > .etiqueta + .cupom { margin-top: -12px; }
+
+/* Ranking */
+.ranking-bloco h2 { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+#ranking { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+#ranking li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--raio); padding: 12px 14px; }
+#ranking li.primeira { border-color: var(--accent); }
+.pos { font: 600 14px var(--font-mono); color: var(--muted); padding-top: 2px; }
+.primeira .pos { color: var(--accent); }
+.corpo { display: grid; gap: 4px; min-width: 0; }
+.cabeca { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.r-loja { font-weight: 700; }
+.r-preco { font: 600 16px var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.r-preco small { font-size: 12px; color: var(--muted); font-weight: 500; }
+.barra { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; }
+.barra span { display: block; height: 100%; background: var(--bar); border-radius: 3px; }
+.primeira .barra span { background: var(--accent); }
+.r-titulo { margin: 0; font-size: 13.5px; color: var(--muted); overflow-wrap: anywhere; }
+.r-pe { display: flex; justify-content: space-between; gap: 10px; font-size: 13.5px; flex-wrap: wrap; }
+.r-total { font-variant-numeric: tabular-nums; }
+.r-diff { font-weight: 600; color: var(--muted); }
+.r-diff.bom { color: var(--good); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.chip { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--bg); color: var(--muted); text-decoration: none; }
+.chip.bom { background: var(--good-bg); color: var(--good); }
+.link-loja { color: var(--accent); }
+.r-dica { margin: 2px 0 0; font-size: 13px; color: var(--good); }
+#avisos:empty { display: none; }
+#avisos { background: var(--warn-bg); color: var(--warn); border-radius: var(--raio); padding: 10px 14px; font-size: 14px; }
+#avisos p { margin: 0; }
+.regras { font-size: 13px; color: var(--muted); margin: 0; max-width: 62ch; }
+
+/* Aviso flutuante */
+.aviso {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  background: var(--ink); color: var(--bg); border-radius: 999px; padding: 10px 12px 10px 18px;
+  display: flex; gap: 14px; align-items: center; box-shadow: 0 6px 24px rgb(0 0 0 / 0.2); max-width: calc(100% - 32px); z-index: 20;
+}
+.aviso button { background: var(--tag); color: var(--tag-ink); border: 0; border-radius: 999px; padding: 5px 12px; font-weight: 700; cursor: pointer; }
+@media (prefers-reduced-motion: no-preference) {
+  .aviso { animation: sobe .2s ease-out; }
+  @keyframes sobe { from { opacity: 0; transform: translate(-50%, 8px); } }
+}
+</style>
+</head>
+<body>
+<div class="pagina">
+  <header class="topo">
+    <div class="marca">
+      <h1>Minhas Compras</h1>
+      <p>Coloque as ofertas que você encontrou. O app soma frete, kits e descontos e mostra onde cada litro, quilo ou unidade sai mais barato.</p>
+    </div>
+    <div class="ferramentas">
+      <button type="button" class="botao-sec" id="ver-exemplo">Carregar exemplo</button>
+      <button type="button" class="botao-sec" id="limpar">Começar do zero</button>
+    </div>
+  </header>
+
+  <div class="confirmar" id="confirmar" hidden role="alertdialog" aria-labelledby="confirmar-texto">
+    <p id="confirmar-texto"></p>
+    <button type="button" id="confirmar-sim">Confirmar</button>
+    <button type="button" id="confirmar-nao">Cancelar</button>
+  </div>
+
+  <main class="principal">
+    <section class="bloco-produto" aria-labelledby="t-produto">
+      <div class="secao-titulo">
+        <h2 id="t-produto">O que você quer comprar</h2>
+        <span class="selo" id="selo-exemplo" hidden>Exemplo com preços fictícios</span>
+      </div>
+      <div class="cartao grade produto-grade">
+        <label class="campo cheia" for="produto-nome">
+          <span class="rotulo">Produto</span>
+          <input id="produto-nome" type="text" placeholder="Sabonete líquido Marca X" autocomplete="off">
+        </label>
+        <label class="campo" for="produto-minimo">
+          <span class="rotulo">Preciso de pelo menos</span>
+          <span class="sufixo"><input id="produto-minimo" type="text" inputmode="decimal" placeholder="opcional, ex.: 2 L" autocomplete="off"><span id="unidade-minimo">ml</span></span>
+        </label>
+        <label class="campo" for="produto-max">
+          <span class="rotulo">Aceito levar até</span>
+          <span class="sufixo"><input id="produto-max" type="text" inputmode="numeric" placeholder="6" autocomplete="off"><span>unid.</span></span>
+        </label>
+      </div>
+    </section>
+
+    <section class="resultado" aria-live="polite" aria-labelledby="t-resultado">
+      <h2 id="t-resultado" class="eyebrow" style="font-family: var(--font-body); color: var(--muted)">Resultado</h2>
+      <div id="avisos"></div>
+      <div id="vencedor"></div>
+      <div class="ranking-bloco">
+        <h2>Todas as ofertas, da mais barata para a mais cara</h2>
+        <ol id="ranking"></ol>
+      </div>
+      <p class="regras">Como o cálculo funciona: o desconto por quantidade vale sobre os produtos; o frete grátis é conferido no valor dos produtos já com esse desconto; o desconto no Pix não vale sobre o frete. Confira o preço final na loja antes de pagar.</p>
+    </section>
+
+    <section class="bloco-ofertas" aria-labelledby="t-ofertas">
+      <div class="secao-titulo"><h2 id="t-ofertas">Ofertas encontradas</h2></div>
+      <div id="ofertas" style="display:grid; gap:14px"></div>
+      <button type="button" class="add" id="add-oferta">+ Adicionar oferta</button>
+    </section>
+  </main>
+</div>
+<div class="aviso" id="aviso" hidden role="status"></div>
+<script type="module" src="src/app.js"></script>
+</body>
+</html>

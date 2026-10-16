@@ -1,0 +1,13 @@
+{
+  "name": "minhas-compras",
+  "version": "0.1.0",
+  "description": "Encontra a compra de menor custo real por ml, grama ou unidade, somando frete, kits e descontos.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "build": "node scripts/build.mjs"
+  },
+  "license": "MIT",
+  "author": "Marlenildo"
+}
