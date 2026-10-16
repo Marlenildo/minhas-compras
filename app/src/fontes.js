@@ -21,14 +21,17 @@ async function pedir(caminho) {
  * Cada item segue o formato comum: loja, lojaIcone, titulo, preco, precoOriginal, foto,
  * link, linkDireto, token, frete (null = a calcular), freteGratis, avaliacao, tamanho...
  */
-export async function buscarProdutos(q) {
+export async function buscarProdutos(q, { cep = '' } = {}) {
   if (modoDemo()) {
     await new Promise((r) => setTimeout(r, 300));
     const d = buscaDemo(q);
-    return { ...d, verificadoEm: new Date().toISOString(), fontes: ['demo'], demo: true };
+    const c = String(cep).replace(/\D/g, '');
+    const local = c.length === 8 ? { cep: c, cidade: 'sua região', uf: '', nivel: 'demo' } : null;
+    return { ...d, local, verificadoEm: new Date().toISOString(), fontes: ['demo'], demo: true };
   }
-  const j = await pedir(`/api/buscar?${new URLSearchParams({ q })}`);
-  return { itens: j.itens || [], verificadoEm: j.verificadoEm, fontes: j.fontes || [], demo: false, aviso: '' };
+  const c = String(cep).replace(/\D/g, '');
+  const j = await pedir(`/api/buscar?${new URLSearchParams(c.length === 8 ? { q, cep: c } : { q })}`);
+  return { itens: j.itens || [], verificadoEm: j.verificadoEm, fontes: j.fontes || [], local: j.local || null, demo: false, aviso: '' };
 }
 
 /** Todas as lojas que vendem um produto, com link direto. Gasta 1 busca da cota (guardada por horas). */

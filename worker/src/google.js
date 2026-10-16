@@ -56,7 +56,7 @@ export function normalizarResultadoGoogle(r, i = 0) {
 }
 
 /** Busca no Google Shopping do Brasil. */
-export async function buscarGoogle(q, { env, fetcher = fetch } = {}) {
+export async function buscarGoogle(q, { env, fetcher = fetch, location = 'Brazil' } = {}) {
   if (!env.SERPAPI_KEY) throw new ErroDeFonte('O servidor ainda não tem a chave da SerpApi (SERPAPI_KEY).', 503);
   const url = `${SERPAPI}?${new URLSearchParams({
     engine: 'google_shopping',
@@ -64,7 +64,7 @@ export async function buscarGoogle(q, { env, fetcher = fetch } = {}) {
     gl: 'br',
     hl: 'pt-br',
     google_domain: 'google.com.br',
-    location: 'Brazil',
+    location: location || 'Brazil',
     api_key: env.SERPAPI_KEY,
   })}`;
   const r = await fetcher(url, { headers: { accept: 'application/json' } });

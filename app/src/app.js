@@ -9,7 +9,7 @@ import { eRelevante, parecenca, buscaParecida, LIMIAR_PARECIDO } from './relevan
 
 const CHAVE = 'minhas-compras:v3';
 const prefs = (() => {
-  const padrao = { ordem: 'relevancia', tamanhos: {}, fretes: {}, manuais: {}, ultimaBusca: '' };
+  const padrao = { ordem: 'relevancia', cep: '', tamanhos: {}, fretes: {}, manuais: {}, ultimaBusca: '' };
   try {
     const p = JSON.parse(localStorage.getItem(CHAVE) || 'null');
     if (p && typeof p === 'object') return { ...padrao, ...p, fretes: p.fretes || {}, manuais: p.manuais || {} };
@@ -26,7 +26,7 @@ function salvar() {
   }
 }
 
-const busca = { q: '', itens: [], verificadoEm: null, fontes: [], demo: false, aviso: '', carregando: false, erro: '' };
+const busca = { q: '', itens: [], verificadoEm: null, fontes: [], local: null, demo: false, aviso: '', carregando: false, erro: '' };
 const FILTROS_VAZIOS = () => ({
   lojas: new Set(), precoMin: '', precoMax: '', freteGratis: false, promocao: false, avaliacao4: false, comTamanho: false,
   relevantes: true, // só o que combina com a busca
@@ -387,14 +387,15 @@ function desenhar() {
   const fora = c.foraDoAssunto
     ? `<span class="fora">${c.foraDoAssunto} fora do assunto escondida${c.foraDoAssunto === 1 ? '' : 's'} · <button type="button" class="link" data-acao="mostrar-todos">mostrar</button></span>`
     : '';
-  $('#status').innerHTML = `<strong>${n}</strong> oferta${n === 1 ? '' : 's'} para “${esc(busca.q)}”<span class="meta">${via ? ` · via ${esc(via)}` : ''}${hora ? ` · às ${hora}` : ''}</span>${fora}`;
+  const l = busca.local;
+  const regiao = l
+    ? `<span class="regiao">Frete estimado para ${esc(l.nivel === 'demo' ? 'o CEP informado' : `${l.cidade}${l.uf ? ` - ${l.uf}` : ''}`)}${l.nivel === 'estado' ? ' (pelo estado)' : ''}</span>`
+    : prefs.cep ? '' : '<span class="regiao">Coloque seu CEP na busca para ver o frete da sua região</span>';
+  $('#status').innerHTML = `<strong>${n}</strong> oferta${n === 1 ? '' : 's'} para “${esc(busca.q)}”<span class="meta">${via ? ` · via ${esc(via)}` : ''}${hora ? ` · às ${hora}` : ''}</span>${regiao}${fora}`;
   $('#aviso-demo').hidden = !busca.aviso;
   $('#aviso-demo').textContent = busca.aviso;
 
-  const sel = $('#ordem');
-  sel.querySelector('option[value="unidade"]').hidden = !c.usaUnidade;
-  sel.querySelector('option[value="unidade"]').textContent = c.usaUnidade ? `Menor preço por ${POR[c.grupo]}` : 'Menor preço por unidade';
-  sel.value = c.ordem;
+  desenharOrdem(c);
 
   const ativos = chipsAtivos();
   $('#chips').innerHTML = ativos.length
@@ -417,6 +418,38 @@ function desenhar() {
   else $('#filtros-conteudo .f-rodape .botao').textContent = `Ver ${c.lista.length} oferta${c.lista.length === 1 ? '' : 's'}`;
 
   desenharBandeja(c);
+}
+
+// Menu de ordenação (no lugar do seletor do sistema)
+function opcoesDeOrdem(c) {
+  return [
+    ['relevancia', 'Relevância', 'Como o Google ordenou'],
+    ['preco', 'Menor preço', 'Preço na loja, sem o frete'],
+    ['total', 'Menor total com frete', 'Ofertas sem frete conhecido vão para o fim'],
+    c.usaUnidade && ['unidade', `Menor preço por ${POR[c.grupo]}`, 'Compara tamanhos diferentes'],
+    ['desconto', 'Maior desconto', 'Em relação ao preço antigo'],
+    ['avaliacao', 'Melhor avaliação', 'Nota e número de avaliações'],
+  ].filter(Boolean);
+}
+
+function desenharOrdem(c) {
+  const opcoes = opcoesDeOrdem(c);
+  $('#ordem-atual').textContent = (opcoes.find(([v]) => v === c.ordem) || opcoes[0])[1];
+  $('#menu-ordem').innerHTML = `<div class="menu-cabeca">Ordenar por<button type="button" class="fechar" data-acao="fechar-ordem" aria-label="Fechar">×</button></div>${opcoes
+    .map(
+      ([v, rotulo, dica]) => `<button type="button" class="opcao-ordem" role="option" data-acao="escolher-ordem" data-ordem="${v}" aria-selected="${v === c.ordem}">
+        <svg class="marca-ok" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>${esc(rotulo)}<small>${esc(dica)}</small></span></button>`
+    )
+    .join('')}`;
+}
+
+function abrirOrdem(abrir) {
+  const menu = $('#menu-ordem');
+  menu.hidden = !abrir;
+  $('#botao-ordem').setAttribute('aria-expanded', String(abrir));
+  document.body.classList.toggle('ordem-aberta', abrir);
+  if (abrir) (menu.querySelector('[aria-selected="true"]') || menu.querySelector('.opcao-ordem'))?.focus();
 }
 
 function itemPorId(id) {
@@ -613,7 +646,7 @@ async function executarBusca(q) {
   salvar();
   desenhar();
   try {
-    Object.assign(busca, await buscarProdutos(q), { carregando: false });
+    Object.assign(busca, { local: null }, await buscarProdutos(q, { cep: prefs.cep }), { carregando: false });
   } catch (e) {
     Object.assign(busca, { itens: [], carregando: false, erro: e.message });
   }
@@ -664,6 +697,16 @@ function aoClicar(ev) {
       return;
     case 'repetir':
       return executarBusca(busca.q);
+    case 'abrir-ordem':
+      return abrirOrdem($('#menu-ordem').hidden);
+    case 'fechar-ordem':
+      return abrirOrdem(false);
+    case 'escolher-ordem':
+      prefs.ordem = alvo.dataset.ordem;
+      salvar();
+      abrirOrdem(false);
+      desenhar();
+      return $('#botao-ordem').focus();
     case 'informar-frete':
       editandoFreteId = editandoFreteId === id ? null : id;
       desenhar();
@@ -711,9 +754,6 @@ function aoMudar(ev) {
     filtros[el.dataset.filtro] = el.checked;
   } else if (el.dataset.filtroPreco) {
     filtros[el.dataset.filtroPreco] = el.value;
-  } else if (el.id === 'ordem') {
-    prefs.ordem = el.value;
-    salvar();
   } else return;
   desenhar();
 }
@@ -808,9 +848,41 @@ function avisar(texto) {
 }
 
 function iniciar() {
+  // CEP: digitado uma vez, lembrado; mudar o CEP refaz a busca
+  const campoCep = $('#cep');
+  const formatarCep = (v) => {
+    const d = String(v).replace(/\D/g, '').slice(0, 8);
+    return d.length > 5 ? `${d.slice(0, 5)}-${d.slice(5)}` : d;
+  };
+  campoCep.value = formatarCep(prefs.cep);
+  campoCep.addEventListener('input', () => (campoCep.value = formatarCep(campoCep.value)));
+  const guardarCep = () => {
+    const d = campoCep.value.replace(/\D/g, '');
+    if (d.length !== 8 && d.length !== 0) return false;
+    const mudou = d !== prefs.cep;
+    prefs.cep = d;
+    salvar();
+    return mudou;
+  };
+  campoCep.addEventListener('change', () => {
+    if (guardarCep() && busca.q && !busca.carregando) executarBusca(busca.q);
+  });
+
   $('#form-busca').addEventListener('submit', (ev) => {
     ev.preventDefault();
-    executarBusca($('#q').value);
+    guardarCep();
+    executarBusca($('#q').value || busca.q);
+  });
+
+  // Menu de ordenação: fecha ao clicar fora ou com Esc
+  document.addEventListener('click', (ev) => {
+    if (!$('#menu-ordem').hidden && !ev.target.closest('.ordenar-menu')) abrirOrdem(false);
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !$('#menu-ordem').hidden) {
+      abrirOrdem(false);
+      $('#botao-ordem').focus();
+    }
   });
   $('#sugestoes').addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-q]');

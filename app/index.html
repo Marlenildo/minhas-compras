@@ -105,6 +105,31 @@ body.buscou .caixa-busca { margin-top: 0; }
 .campo-q svg { color: var(--muted); flex: none; }
 .campo-q input { border: 0; background: transparent; width: 100%; min-width: 0; padding: 12px 0; font-size: 16.5px; outline: none; }
 .caixa-busca:focus-within { border-color: var(--accent); }
+.campo-cep { flex: 0 0 150px; display: flex; align-items: center; gap: 7px; padding: 0 12px; border-left: 1px solid var(--line); color: var(--muted); min-width: 0; }
+.campo-cep input { border: 0; background: transparent; width: 100%; min-width: 0; padding: 12px 0; font-size: 15.5px; outline: none; color: var(--ink); font-variant-numeric: tabular-nums; }
+#status .regiao { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+/* Menu de ordenação do próprio app */
+.ordenar-menu { position: relative; }
+#botao-ordem { gap: 7px; }
+#botao-ordem strong { font-weight: 800; }
+#botao-ordem .ordem-rotulo { color: var(--muted); font-weight: 600; }
+#botao-ordem .seta { transition: transform 0.15s; }
+#botao-ordem[aria-expanded="true"] .seta { transform: rotate(180deg); }
+.menu-ordem {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 35; width: 260px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 14px; box-shadow: var(--shadow); padding: 6px; display: grid; gap: 2px;
+}
+.menu-cabeca { display: none; }
+.opcao-ordem {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; background: none; border-radius: 10px;
+  padding: 10px 12px; font-size: 14.5px; font-weight: 600; color: var(--ink);
+}
+.opcao-ordem:hover { background: var(--surface-2); }
+.opcao-ordem .marca-ok { width: 18px; height: 18px; flex: none; color: var(--accent); visibility: hidden; }
+.opcao-ordem[aria-selected="true"] { color: var(--accent); background: var(--accent-soft); }
+.opcao-ordem[aria-selected="true"] .marca-ok { visibility: visible; }
+.opcao-ordem small { display: block; font-size: 12px; font-weight: 500; color: var(--muted); }
 .caixa-busca .botao { padding-inline: 22px; font-size: 15.5px; }
 #sugestoes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 body.buscou #sugestoes { display: none; }
@@ -119,8 +144,6 @@ body.buscou #sugestoes { display: none; }
 .controles { display: flex; gap: 8px; align-items: center; }
 #botao-filtros { display: none; }
 .contador { margin-left: 2px; background: var(--accent); color: var(--accent-ink); border-radius: 999px; font-size: 11.5px; min-width: 19px; height: 19px; display: inline-grid; place-items: center; padding: 0 5px; }
-.ordenar { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--muted); font-weight: 600; }
-.ordenar select { border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 9px 12px; font-weight: 700; color: var(--ink); font-size: 14px; max-width: 220px; }
 #aviso-demo { margin: 0; font-size: 13.5px; color: var(--warn); background: var(--warn-bg); padding: 8px 12px; border-radius: 10px; }
 #chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 #chips:empty { display: none; }
@@ -324,9 +347,20 @@ dialog::backdrop { background: rgb(8 14 11 / 0.55); }
   .f-cabeca .link { margin-left: auto; }
   .f-rodape { display: block; position: sticky; bottom: 0; background: var(--surface); padding-top: 8px; }
   .f-rodape .botao { width: 100%; }
-  .ordenar span { display: none; }
+  .ordem-rotulo { display: none; }
+  .menu-ordem {
+    position: fixed; left: 0; right: 0; bottom: 0; top: auto; width: auto; z-index: 46; border-radius: 20px 20px 0 0; border: 0;
+    padding: 8px 10px calc(14px + env(safe-area-inset-bottom, 0px)); box-shadow: 0 -12px 40px rgb(0 0 0 / 0.25);
+  }
+  .menu-cabeca { display: flex; align-items: center; justify-content: space-between; padding: 8px 8px 10px; font-family: var(--font-display); font-size: 19px; font-weight: 800; font-stretch: 90%; }
+  body.ordem-aberta::after { content: ""; position: fixed; inset: 0; background: rgb(8 14 11 / 0.5); z-index: 44; }
+  .opcao-ordem { padding: 13px 12px; font-size: 15.5px; }
 }
 @media (max-width: 560px) {
+  .caixa-busca { flex-wrap: wrap; }
+  .campo-q { flex: 1 1 100%; }
+  .campo-cep { flex: 1 1 0; border-left: 0; border-top: 1px solid var(--line); }
+  .caixa-busca .botao { margin-top: 6px; }
   #grade { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .cartao-corpo { padding: 10px 10px 12px; }
   .valor { font-size: 25px; }
@@ -404,6 +438,11 @@ dialog::backdrop { background: rgb(8 14 11 / 0.55); }
       <span class="sr">O que você quer comprar?</span>
       <input id="q" name="q" type="search" placeholder="O que você quer comprar?" autocomplete="off" enterkeyhint="search">
     </label>
+    <label class="campo-cep" for="cep" title="Seu CEP, para ver o frete da sua região">
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 15s5-4.6 5-8.5A5 5 0 0 0 3 6.5C3 10.4 8 15 8 15z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="8" cy="6.5" r="1.8" fill="currentColor"/></svg>
+      <span class="sr">Seu CEP</span>
+      <input id="cep" name="cep" inputmode="numeric" placeholder="Seu CEP" autocomplete="postal-code" maxlength="9" enterkeyhint="search">
+    </label>
     <button type="submit" class="botao">Buscar</button>
   </form>
   <div id="sugestoes">
@@ -420,16 +459,14 @@ dialog::backdrop { background: rgb(8 14 11 / 0.55); }
     <p id="status"></p>
     <div class="controles">
       <button type="button" class="botao-sec" id="botao-filtros" data-acao="abrir-filtros">Filtros</button>
-      <label class="ordenar" for="ordem"><span>Ordenar por</span>
-        <select id="ordem">
-          <option value="relevancia">Relevância</option>
-          <option value="preco">Menor preço</option>
-          <option value="total">Menor total com frete</option>
-          <option value="unidade">Menor preço por unidade</option>
-          <option value="desconto">Maior desconto</option>
-          <option value="avaliacao">Melhor avaliação</option>
-        </select>
-      </label>
+      <div class="ordenar-menu">
+        <button type="button" class="botao-sec" id="botao-ordem" data-acao="abrir-ordem" aria-haspopup="listbox" aria-expanded="false" aria-controls="menu-ordem">
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3v10M4 13l-2.5-2.5M4 13l2.5-2.5M12 13V3M12 3L9.5 5.5M12 3l2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="ordem-rotulo">Ordenar:</span><strong id="ordem-atual">Relevância</strong>
+          <svg class="seta" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="menu-ordem" id="menu-ordem" role="listbox" aria-label="Ordenar por" hidden></div>
+      </div>
     </div>
   </div>
   <p id="aviso-demo" hidden></p>

@@ -346,7 +346,7 @@ function normalizarResultadoGoogle(r, i = 0) {
     fonteConteudo: tamanho ? "titulo" : null
   };
 }
-async function buscarGoogle(q, { env, fetcher = fetch } = {}) {
+async function buscarGoogle(q, { env, fetcher = fetch, location = "Brazil" } = {}) {
   if (!env.SERPAPI_KEY) throw new ErroDeFonte("O servidor ainda n\xE3o tem a chave da SerpApi (SERPAPI_KEY).", 503);
   const url = `${SERPAPI}?${new URLSearchParams({
     engine: "google_shopping",
@@ -354,7 +354,7 @@ async function buscarGoogle(q, { env, fetcher = fetch } = {}) {
     gl: "br",
     hl: "pt-br",
     google_domain: "google.com.br",
-    location: "Brazil",
+    location: location || "Brazil",
     api_key: env.SERPAPI_KEY
   })}`;
   const r = await fetcher(url, { headers: { accept: "application/json" } });
@@ -462,6 +462,101 @@ async function buscarLojasDoProduto(token, { env, fetcher = fetch } = {}) {
   };
 }
 
+// worker/src/cep.js
+var ESTADOS = {
+  AC: "Acre",
+  AL: "Alagoas",
+  AP: "Amapa",
+  AM: "Amazonas",
+  BA: "Bahia",
+  CE: "Ceara",
+  DF: "Federal District",
+  ES: "Espirito Santo",
+  GO: "Goias",
+  MA: "Maranhao",
+  MT: "Mato Grosso",
+  MS: "Mato Grosso do Sul",
+  MG: "Minas Gerais",
+  PA: "Para",
+  PB: "Paraiba",
+  PR: "Parana",
+  PE: "Pernambuco",
+  PI: "Piaui",
+  RJ: "Rio de Janeiro",
+  RN: "Rio Grande do Norte",
+  RS: "Rio Grande do Sul",
+  RO: "Rondonia",
+  RR: "Roraima",
+  SC: "Santa Catarina",
+  SP: "Sao Paulo",
+  SE: "Sergipe",
+  TO: "Tocantins"
+};
+var semAcento = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
+var limparCep = (cep) => String(cep || "").replace(/\D/g, "").slice(0, 8);
+async function cidadeDoCep(cep, fetcher = fetch) {
+  const c = limparCep(cep);
+  if (c.length !== 8) return null;
+  try {
+    const r = await fetcher(`https://viacep.com.br/ws/${c}/json/`, { headers: { accept: "application/json" } });
+    if (r.ok) {
+      const j = await r.json();
+      if (j && !j.erro && j.localidade && j.uf) return { cidade: j.localidade, uf: j.uf };
+      if (j && j.erro) return null;
+    }
+  } catch (_) {
+  }
+  try {
+    const r = await fetcher(`https://brasilapi.com.br/api/cep/v1/${c}`, { headers: { accept: "application/json" } });
+    if (r.ok) {
+      const j = await r.json();
+      if (j && j.city && j.state) return { cidade: j.city, uf: j.state };
+    }
+  } catch (_) {
+  }
+  return null;
+}
+async function procurarLocal(q, fetcher) {
+  try {
+    const r = await fetcher(`https://serpapi.com/locations.json?${new URLSearchParams({ q, limit: "10" })}`, {
+      headers: { accept: "application/json" }
+    });
+    if (!r.ok) return [];
+    const j = await r.json();
+    return Array.isArray(j) ? j.filter((l) => l.country_code === "BR") : [];
+  } catch (_) {
+    return [];
+  }
+}
+async function localizacaoGoogle({ cidade, uf }, fetcher = fetch) {
+  const estado = ESTADOS[uf];
+  const cidadeSA = semAcento(cidade).toLowerCase();
+  const daCidade = (await procurarLocal(semAcento(cidade), fetcher)).find(
+    (l) => semAcento(l.name).toLowerCase() === cidadeSA && (!estado || semAcento(l.canonical_name).includes(estado))
+  );
+  if (daCidade) return { location: daCidade.canonical_name, nivel: "cidade" };
+  if (estado) {
+    const doEstado = (await procurarLocal(estado, fetcher)).find((l) => /state|region|district/i.test(l.target_type || "") && semAcento(l.name) === estado);
+    if (doEstado) return { location: doEstado.canonical_name, nivel: "estado" };
+  }
+  return { location: "Brazil", nivel: "pais" };
+}
+async function localDoCep(cep, { env, fetcher = fetch } = {}) {
+  const c = limparCep(cep);
+  if (c.length !== 8) return null;
+  const chave = `cep:${c}`;
+  if (env.TOKENS) {
+    const salvo = await env.TOKENS.get(chave, "json").catch(() => null);
+    if (salvo) return salvo;
+  }
+  const lugar = await cidadeDoCep(c, fetcher);
+  if (!lugar) return null;
+  const local = { cep: c, ...lugar, ...await localizacaoGoogle(lugar, fetcher) };
+  if (env.TOKENS) await env.TOKENS.put(chave, JSON.stringify(local), { expirationTtl: 30 * 24 * 3600 }).catch(() => {
+  });
+  return local;
+}
+
 // worker/src/index.js
 var fonteAtiva = (env) => env.SERPAPI_KEY ? "google" : env.ML_CLIENT_ID && env.ML_CLIENT_SECRET ? "mercadolivre" : null;
 function cors(env, req) {
@@ -547,15 +642,17 @@ async function tratar(req, env, ctx = {}, fetcher = fetch) {
     const cep = (url.searchParams.get("cep") || "").replace(/\D/g, "").slice(0, 8);
     const fonte = fonteAtiva(env);
     if (!fonte) return json({ erro: "O servidor ainda n\xE3o tem nenhuma fonte de pre\xE7os configurada." }, 503, cabecalhos2);
-    const chaveCache = `busca:${fonte}:${q.toLowerCase()}${fonte === "mercadolivre" ? `:${cep}` : ""}`;
+    const local = cep.length === 8 ? await localDoCep(cep, { env, fetcher }).catch(() => null) : null;
+    const location = local?.location || "Brazil";
+    const chaveCache = `busca:${fonte}:${q.toLowerCase()}:${fonte === "mercadolivre" ? cep : location}`;
     const horas = Math.max(0.1, Number(env.CACHE_HORAS) || 6);
     if (env.TOKENS) {
       const salvo = await env.TOKENS.get(chaveCache, "json").catch(() => null);
       if (salvo) return json({ ...salvo, doCache: true }, 200, { ...cabecalhos2, "cache-control": "public, max-age=300" });
     }
     try {
-      const itens = fonte === "google" ? await buscarGoogle(q, { env, fetcher }) : await buscarML(q, { env, cep, fetcher });
-      const corpo = { q, cep: cep || null, verificadoEm: (/* @__PURE__ */ new Date()).toISOString(), fontes: [fonte], itens };
+      const itens = fonte === "google" ? await buscarGoogle(q, { env, fetcher, location }) : await buscarML(q, { env, cep, fetcher });
+      const corpo = { q, cep: cep || null, local, verificadoEm: (/* @__PURE__ */ new Date()).toISOString(), fontes: [fonte], itens };
       if (env.TOKENS) {
         const gravar = env.TOKENS.put(chaveCache, JSON.stringify(corpo), { expirationTtl: Math.max(60, Math.round(horas * 3600)) });
         if (ctx.waitUntil) ctx.waitUntil(gravar);

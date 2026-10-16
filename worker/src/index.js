@@ -4,6 +4,7 @@
 // GET /api/diagnostico                              → testa cada fonte de preços
 import { buscarML, diagnosticarML, iniciarConexao, concluirConexao, ErroDeFonte } from './mercadolivre.js';
 import { buscarGoogle, diagnosticarGoogle, buscarLojasDoProduto } from './google.js';
+import { localDoCep } from './cep.js';
 
 /** Fonte usada nas buscas: Google Shopping quando há chave da SerpApi; senão, Mercado Livre. */
 const fonteAtiva = (env) => (env.SERPAPI_KEY ? 'google' : env.ML_CLIENT_ID && env.ML_CLIENT_SECRET ? 'mercadolivre' : null);
@@ -108,7 +109,10 @@ export async function tratar(req, env, ctx = {}, fetcher = fetch) {
     if (!fonte) return json({ erro: 'O servidor ainda não tem nenhuma fonte de preços configurada.' }, 503, cabecalhos);
 
     // O Google não usa o CEP; o Mercado Livre usa para o frete
-    const chaveCache = `busca:${fonte}:${q.toLowerCase()}${fonte === 'mercadolivre' ? `:${cep}` : ''}`;
+    // Com CEP, a busca do Google é feita para a cidade (ou o estado) da pessoa
+    const local = cep.length === 8 ? await localDoCep(cep, { env, fetcher }).catch(() => null) : null;
+    const location = local?.location || 'Brazil';
+    const chaveCache = `busca:${fonte}:${q.toLowerCase()}:${fonte === 'mercadolivre' ? cep : location}`;
     const horas = Math.max(0.1, Number(env.CACHE_HORAS) || 6);
 
     // 1. Cache no KV: vale para o mundo todo e poupa a cota de buscas
@@ -118,8 +122,8 @@ export async function tratar(req, env, ctx = {}, fetcher = fetch) {
     }
 
     try {
-      const itens = fonte === 'google' ? await buscarGoogle(q, { env, fetcher }) : await buscarML(q, { env, cep, fetcher });
-      const corpo = { q, cep: cep || null, verificadoEm: new Date().toISOString(), fontes: [fonte], itens };
+      const itens = fonte === 'google' ? await buscarGoogle(q, { env, fetcher, location }) : await buscarML(q, { env, cep, fetcher });
+      const corpo = { q, cep: cep || null, local, verificadoEm: new Date().toISOString(), fontes: [fonte], itens };
       if (env.TOKENS) {
         const gravar = env.TOKENS.put(chaveCache, JSON.stringify(corpo), { expirationTtl: Math.max(60, Math.round(horas * 3600)) });
         if (ctx.waitUntil) ctx.waitUntil(gravar);
