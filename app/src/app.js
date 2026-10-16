@@ -1,6 +1,7 @@
 import { UNIDADES, lerNumero, lerTitulo, grupoDaOferta, quantidadeDoAnuncio, precoExibido } from './core.js';
 import { buscarProdutos, buscarLojas, modoDemo } from './fontes.js';
 import { fotoReserva } from './demo.js';
+import { eRelevante, parecenca, buscaParecida, LIMIAR_PARECIDO } from './relevancia.js';
 
 // ---------------------------------------------------------------------------
 // Estado
@@ -8,10 +9,10 @@ import { fotoReserva } from './demo.js';
 
 const CHAVE = 'minhas-compras:v3';
 const prefs = (() => {
-  const padrao = { ordem: 'relevancia', tamanhos: {}, ultimaBusca: '' };
+  const padrao = { ordem: 'relevancia', tamanhos: {}, fretes: {}, manuais: {}, ultimaBusca: '' };
   try {
     const p = JSON.parse(localStorage.getItem(CHAVE) || 'null');
-    if (p && typeof p === 'object') return { ...padrao, ...p };
+    if (p && typeof p === 'object') return { ...padrao, ...p, fretes: p.fretes || {}, manuais: p.manuais || {} };
   } catch (_) {
     /* sem armazenamento */
   }
@@ -26,11 +27,17 @@ function salvar() {
 }
 
 const busca = { q: '', itens: [], verificadoEm: null, fontes: [], demo: false, aviso: '', carregando: false, erro: '' };
-const FILTROS_VAZIOS = () => ({ lojas: new Set(), precoMin: '', precoMax: '', freteGratis: false, promocao: false, avaliacao4: false, comTamanho: false });
+const FILTROS_VAZIOS = () => ({
+  lojas: new Set(), precoMin: '', precoMax: '', freteGratis: false, promocao: false, avaliacao4: false, comTamanho: false,
+  relevantes: true, // só o que combina com a busca
+  parecidosCom: null, // { id, titulo }
+});
+const chaveBusca = (q) => String(q).trim().toLowerCase().replace(/\s+/g, ' ');
 let filtros = FILTROS_VAZIOS();
 const comparar = new Set();
 const MAX_COMPARAR = 4;
 let detalhe = null; // { item, carregando, erro, dados, editandoTamanho }
+let editandoFreteId = null; // cartão com o campo de frete aberto
 
 // ---------------------------------------------------------------------------
 // Formatação
@@ -107,7 +114,9 @@ function avatarLoja(nome, icone, tamanho = '') {
 
 function enriquecer(i, ordem) {
   const t = prefs.tamanhos[i.id];
-  const it = t ? { ...i, ...t, fonteConteudo: 'voce' } : i;
+  let it = t ? { ...i, ...t, fonteConteudo: 'voce' } : i;
+  const fv = prefs.fretes[i.id];
+  if (typeof fv === 'number') it = { ...it, frete: fv, freteGratis: fv === 0, freteDeVoce: true };
   const temTamanho = lerNumero(it.conteudo) > 0 && Boolean(UNIDADES[it.unidade]);
   const frete = it.freteGratis ? 0 : it.frete ?? null;
   const total = it.preco + (frete || 0);
@@ -127,15 +136,24 @@ function enriquecer(i, ordem) {
 }
 
 function calcular() {
-  const todos = busca.itens.filter((i) => i.preco > 0).map(enriquecer);
+  const manuais = prefs.manuais[chaveBusca(busca.q)] || [];
+  const todos = [...busca.itens, ...manuais].filter((i) => i.preco > 0).map(enriquecer);
+  for (const i of todos) i.relevante = i.fonte === 'manual' || eRelevante(i.titulo, busca.q);
+  const alvo = filtros.parecidosCom;
+  const base = todos.filter(
+    (i) =>
+      (!filtros.relevantes || i.relevante || (alvo && i.id === alvo.id)) &&
+      (!alvo || i.id === alvo.id || parecenca(i.titulo, alvo.titulo) >= LIMIAR_PARECIDO)
+  );
+  const foraDoAssunto = filtros.relevantes ? todos.filter((i) => !i.relevante).length : 0;
   const contagem = {};
-  for (const i of todos) if (i.grupo) contagem[i.grupo] = (contagem[i.grupo] || 0) + 1;
+  for (const i of base) if (i.grupo) contagem[i.grupo] = (contagem[i.grupo] || 0) + 1;
   const [grupo, nGrupo] = Object.entries(contagem).sort((a, b) => b[1] - a[1])[0] || [null, 0];
   const usaUnidade = nGrupo >= 2;
 
   const min = lerNumero(filtros.precoMin, 0);
   const max = lerNumero(filtros.precoMax, 0);
-  const lista = todos.filter(
+  const lista = base.filter(
     (i) =>
       (!filtros.lojas.size || filtros.lojas.has(i.loja)) &&
       (!min || i.preco >= min) &&
@@ -175,9 +193,9 @@ function calcular() {
     if (a) destaques.avaliacao = a;
   }
 
-  // Lojas para o filtro (de todos os resultados, não só dos filtrados)
+  // Lojas para o filtro (do que combina com a busca, antes dos outros filtros)
   const lojas = new Map();
-  for (const i of todos) {
+  for (const i of base) {
     const l = lojas.get(i.loja) || { nome: i.loja, icone: i.lojaIcone, n: 0, min: Infinity };
     l.n++;
     l.min = Math.min(l.min, i.preco);
@@ -185,7 +203,7 @@ function calcular() {
     lojas.set(i.loja, l);
   }
 
-  return { todos, lista, grupo, usaUnidade, ordem, destaques, lojas: [...lojas.values()].sort((a, b) => b.n - a.n || a.min - b.min) };
+  return { alvoId: alvo?.id || null, todos, base, foraDoAssunto, lista, grupo, usaUnidade, ordem, destaques, lojas: [...lojas.values()].sort((a, b) => b.n - a.n || a.min - b.min) };
 }
 
 // ---------------------------------------------------------------------------
@@ -195,9 +213,22 @@ function calcular() {
 const foto = (i, classe = 'foto') => `<img class="${classe}" src="${esc(i.foto || fotoReserva)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">`;
 
 function linhaFrete(i) {
-  if (i.frete === 0) return '<span class="frete bom">Frete grátis</span>';
-  if (i.frete == null) return '<span class="frete">Frete a calcular na loja</span>';
-  return `<span class="frete">+ ${brl(i.frete)} de frete · <strong>total ${brl(i.total)}</strong></span>`;
+  const seu = i.freteDeVoce ? ' <span class="seu">(informado por você)</span>' : '';
+  const alterar = i.freteDeVoce ? ' <button type="button" class="link mini" data-acao="informar-frete">alterar</button>' : '';
+  if (i.frete === 0) return `<span class="frete bom">Frete grátis${seu}${alterar}</span>`;
+  if (i.frete == null) return '<span class="frete">Frete a calcular · <button type="button" class="link mini" data-acao="informar-frete">informar</button></span>';
+  return `<span class="frete">+ ${brl(i.frete)} de frete${seu}${alterar} · <strong>total ${brl(i.total)}</strong></span>`;
+}
+
+function formFrete(i) {
+  const v = typeof prefs.fretes[i.id] === 'number' ? String(prefs.fretes[i.id]).replace('.', ',') : '';
+  return `<form class="form-frete" data-form="frete" data-id="${esc(i.id)}">
+    <label class="sr" for="fr-${esc(i.id)}">Frete em reais</label><span aria-hidden="true">R$</span>
+    <input id="fr-${esc(i.id)}" name="frete" inputmode="decimal" placeholder="0 = grátis" value="${esc(v)}" autocomplete="off">
+    <button type="submit" class="botao">Usar</button>
+    ${v ? '<button type="button" class="link" data-acao="limpar-frete">apagar</button>' : ''}
+    <p class="erro-campo" hidden></p>
+  </form>`;
 }
 
 function htmlCartao(i, c) {
@@ -222,19 +253,24 @@ function htmlCartao(i, c) {
       </button>
     </div>
     <div class="cartao-corpo">
-      <div class="loja-linha">${avatarLoja(i.loja, i.lojaIcone)}<span class="loja-nome">${esc(i.loja)}</span>${i.variasLojas ? '<span class="mais">+ lojas</span>' : ''}</div>
+      <div class="loja-linha">${avatarLoja(i.loja, i.lojaIcone)}<span class="loja-nome">${esc(i.loja)}</span>${i.fonte === 'manual' ? '<span class="mais">sua oferta</span>' : i.variasLojas ? '<span class="mais">+ lojas</span>' : ''}</div>
       <h3 class="titulo" title="${esc(i.titulo)}">${esc(i.titulo)}</h3>
       ${estrelas(i.avaliacao, i.avaliacoes)}
       <div class="preco-bloco">
         <span class="rotulo-preco">Preço na loja</span>
         <div class="preco-linha">${precoGrande(i.preco)}${i.precoOriginal > i.preco ? `<s>${brl(i.precoOriginal)}</s>` : ''}</div>
         ${linhaFrete(i)}
+        ${editandoFreteId === i.id ? formFrete(i) : ''}
         ${unit}
       </div>
       <div class="acoes">
-        <button type="button" class="botao" data-acao="detalhe">Ver onde comprar</button>
+        ${i.fonte === 'manual' ? '' : '<button type="button" class="botao" data-acao="detalhe">Ver onde comprar</button>'}
         ${direto ? `<a class="botao-sec" href="${esc(direto)}" target="_blank" rel="noopener noreferrer">Ir à loja ↗</a>` : ''}
+        ${i.fonte === 'manual' ? `${linkSeguro(i.link) ? `<a class="botao-sec" href="${esc(linkSeguro(i.link))}" target="_blank" rel="noopener noreferrer">Ir à loja ↗</a>` : ''}<button type="button" class="botao-sec perigo" data-acao="remover-manual">Remover</button>` : ''}
       </div>
+      ${i.fonte === 'manual' ? '' : `<button type="button" class="parecidos${c.alvoId === i.id ? ' ativo' : ''}" data-acao="parecidos">
+        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="6" cy="6" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="10" cy="10" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+        ${c.alvoId === i.id ? 'Mostrando parecidos' : 'Só parecidos com este'}</button>`}
     </div>
   </article>`;
 }
@@ -289,6 +325,7 @@ function htmlFiltros(c) {
     </div>
     <div class="f-grupo">
       <h3>Mostrar só</h3>
+      ${chk('relevantes', 'O que combina com a busca')}
       ${chk('freteGratis', 'Frete grátis')}
       ${chk('promocao', 'Em promoção')}
       ${chk('avaliacao4', '4 estrelas ou mais')}
@@ -306,6 +343,7 @@ function chipsAtivos() {
   if (filtros.promocao) c.push(['promocao', 'Em promoção']);
   if (filtros.avaliacao4) c.push(['avaliacao4', '4★ ou mais']);
   if (filtros.comTamanho) c.push(['comTamanho', 'Com preço por unidade']);
+  if (filtros.parecidosCom) c.unshift(['parecidosCom', `Parecidos com: ${filtros.parecidosCom.titulo.slice(0, 40)}${filtros.parecidosCom.titulo.length > 40 ? '…' : ''}`]);
   return c;
 }
 
@@ -345,8 +383,11 @@ function desenhar() {
   const NOMES = { google: 'Google Shopping', mercadolivre: 'Mercado Livre', demo: 'demonstração' };
   const via = busca.fontes.map((f) => NOMES[f] || f).join(' e ');
   const hora = busca.verificadoEm ? new Date(busca.verificadoEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
-  const total = c.todos.length;
-  $('#status').innerHTML = `<strong>${c.lista.length === total ? total : `${c.lista.length} de ${total}`}</strong> oferta${total === 1 ? '' : 's'} para “${esc(busca.q)}”<span class="meta">${via ? ` · via ${esc(via)}` : ''}${hora ? ` · às ${hora}` : ''}</span>`;
+  const n = c.lista.length;
+  const fora = c.foraDoAssunto
+    ? `<span class="fora">${c.foraDoAssunto} fora do assunto escondida${c.foraDoAssunto === 1 ? '' : 's'} · <button type="button" class="link" data-acao="mostrar-todos">mostrar</button></span>`
+    : '';
+  $('#status').innerHTML = `<strong>${n}</strong> oferta${n === 1 ? '' : 's'} para “${esc(busca.q)}”<span class="meta">${via ? ` · via ${esc(via)}` : ''}${hora ? ` · às ${hora}` : ''}</span>${fora}`;
   $('#aviso-demo').hidden = !busca.aviso;
   $('#aviso-demo').textContent = busca.aviso;
 
@@ -366,7 +407,9 @@ function desenhar() {
   $('#destaques').innerHTML = htmlDestaques(c);
   $('#grade').innerHTML = c.lista.length
     ? c.lista.map((i) => htmlCartao(i, c)).join('')
-    : `<div class="vazio">Nenhuma oferta com esses filtros. <button type="button" class="link" data-acao="limpar-filtros">Limpar filtros</button></div>`;
+    : !c.base.length && c.foraDoAssunto
+      ? `<div class="vazio">Nenhuma oferta tem todas as palavras da busca. Tente escrever de outro jeito, ou <button type="button" class="link" data-acao="mostrar-todos">mostre todas as ofertas</button>.</div>`
+      : `<div class="vazio">Nenhuma oferta com esses filtros. <button type="button" class="link" data-acao="limpar-filtros">Limpar filtros</button></div>`;
 
   // Não redesenha o formulário de filtros enquanto alguém digita o preço
   const ativo = document.activeElement;
@@ -523,6 +566,10 @@ function desenharDetalhe() {
             : ''
         }
         <p class="det-oferta">Oferta encontrada: ${avatarLoja(i.loja, i.lojaIcone, 'mini')} ${esc(i.loja)} · <strong>${brl(i.preco)}</strong></p>
+        <div class="det-acoes">
+          <button type="button" class="botao-sec" data-acao="parecidos" data-id="${esc(i.id)}">Só parecidos com este</button>
+          <button type="button" class="botao-sec" data-acao="buscar-parecidos" data-id="${esc(i.id)}" title="Faz uma busca nova com o nome deste produto">Buscar mais parecidos nas lojas</button>
+        </div>
       </div>
     </div>
     <h3 class="det-sub">Lojas com este produto <span class="nd">· menor total primeiro</span></h3>
@@ -561,6 +608,7 @@ async function executarBusca(q) {
   Object.assign(busca, { q, carregando: true, erro: '', itens: [] });
   filtros = FILTROS_VAZIOS();
   comparar.clear();
+  editandoFreteId = null;
   prefs.ultimaBusca = q;
   salvar();
   desenhar();
@@ -580,6 +628,7 @@ function aoClicar(ev) {
   if (alvo.dataset.removerFiltro) {
     const k = alvo.dataset.removerFiltro;
     if (k.startsWith('loja:')) filtros.lojas.delete(k.slice(5));
+    else if (k === 'parecidosCom') filtros.parecidosCom = null;
     else filtros[k] = typeof filtros[k] === 'boolean' ? false : '';
     return desenhar();
   }
@@ -615,6 +664,41 @@ function aoClicar(ev) {
       return;
     case 'repetir':
       return executarBusca(busca.q);
+    case 'informar-frete':
+      editandoFreteId = editandoFreteId === id ? null : id;
+      desenhar();
+      return document.querySelector(`.form-frete[data-id="${CSS.escape(id)}"] input`)?.focus();
+    case 'limpar-frete':
+      delete prefs.fretes[id];
+      editandoFreteId = null;
+      salvar();
+      return desenhar();
+    case 'mostrar-todos':
+      filtros.relevantes = false;
+      return desenhar();
+    case 'parecidos': {
+      const item = itemPorId(id);
+      if (!item) return;
+      fecharDialogos();
+      filtros.parecidosCom = filtros.parecidosCom?.id === id ? null : { id, titulo: item.titulo };
+      desenhar();
+      return $('#resultados').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    case 'buscar-parecidos': {
+      const item = itemPorId(id);
+      if (!item) return;
+      fecharDialogos();
+      const q = buscaParecida(item.titulo);
+      $('#q').value = q;
+      return executarBusca(q);
+    }
+    case 'remover-manual': {
+      const k = chaveBusca(busca.q);
+      prefs.manuais[k] = (prefs.manuais[k] || []).filter((m) => m.id !== id);
+      comparar.delete(id);
+      salvar();
+      return desenhar();
+    }
   }
 }
 
@@ -634,8 +718,63 @@ function aoMudar(ev) {
   desenhar();
 }
 
+function erroNoForm(form, texto) {
+  const p = $('.erro-campo', form);
+  p.textContent = texto;
+  p.hidden = !texto;
+}
+
 function aoEnviar(ev) {
   const form = ev.target;
+  if (form.dataset.form === 'frete') {
+    ev.preventDefault();
+    const txt = form.frete.value.trim();
+    const v = txt === '' ? NaN : lerNumero(txt, NaN);
+    if (!(v >= 0)) return erroNoForm(form, 'Digite o valor do frete, por exemplo 12,90. Use 0 para frete grátis.');
+    prefs.fretes[form.dataset.id] = Math.round(v * 100) / 100;
+    editandoFreteId = null;
+    salvar();
+    return desenhar();
+  }
+  if (form.dataset.form === 'manual') {
+    ev.preventDefault();
+    const d = Object.fromEntries(new FormData(form));
+    const preco = lerNumero(d.preco, 0);
+    if (!String(d.loja).trim()) return erroNoForm(form, 'Diga o nome da loja.');
+    if (!String(d.titulo).trim()) return erroNoForm(form, 'Diga qual é o produto.');
+    if (!(preco > 0)) return erroNoForm(form, 'Informe o preço, por exemplo 21,90.');
+    const frete = String(d.frete).trim() === '' ? null : lerNumero(d.frete, null);
+    const tamanho = lerTitulo(d.titulo) || lerUnidades(d.titulo);
+    const k = chaveBusca(busca.q);
+    prefs.manuais[k] = [
+      ...(prefs.manuais[k] || []),
+      {
+        id: `manual:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+        fonte: 'manual',
+        loja: String(d.loja).trim(),
+        lojaIcone: null,
+        titulo: String(d.titulo).trim(),
+        preco,
+        precoOriginal: null,
+        frete,
+        freteGratis: frete === 0,
+        link: String(d.link || '').trim(),
+        linkDireto: false,
+        foto: null,
+        avaliacao: null,
+        avaliacoes: null,
+        embalagens: tamanho?.embalagens ?? null,
+        conteudo: tamanho?.conteudo ?? null,
+        unidade: tamanho?.unidade ?? null,
+      },
+    ];
+    salvar();
+    form.reset();
+    erroNoForm(form, '');
+    $('#manual').open = false;
+    avisar('Oferta adicionada à comparação.');
+    return desenhar();
+  }
   if (form.dataset.form !== 'tamanho') return;
   ev.preventDefault();
   const lido = lerTitulo(form.tamanho.value) || lerUnidades(form.tamanho.value);
@@ -711,7 +850,7 @@ function iniciar() {
     $('#botao-conta').setAttribute('aria-expanded', 'false');
   });
 
-  const inicial = prefs.ultimaBusca || (modoDemo() ? 'sabonete líquido refil' : '');
+  const inicial = prefs.ultimaBusca || (modoDemo() ? 'sabonete líquido' : '');
   if (inicial) {
     $('#q').value = inicial;
     executarBusca(inicial);

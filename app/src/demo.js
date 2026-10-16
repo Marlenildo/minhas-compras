@@ -94,7 +94,7 @@ function sabonetes() {
       foto: img.kit3('algodao'), freteGratis: true, frete: 0, embalagens: 3, conteudo: 250, unidade: 'ml', precoOriginal: 34.9, avaliacao: 4.8, avaliacoes: 2140,
     }),
     item('Mercado Livre', 'Sabonete Líquido Marca X Erva-doce Refil 900ml', 21.49, {
-      foto: img.refil('erva'), frete: 8.9, embalagens: 1, conteudo: 900, unidade: 'ml', avaliacao: 4.7, avaliacoes: 860,
+      foto: img.refil('erva'), frete: null, embalagens: 1, conteudo: 900, unidade: 'ml', avaliacao: 4.7, avaliacoes: 860,
     }),
     item('Amazon', 'Sabonete Líquido Marca X Lavanda Refil 2x900ml', 39.9, {
       foto: img.refil2('lavanda'), freteGratis: true, frete: 0, embalagens: 2, conteudo: 900, unidade: 'ml', precoOriginal: 47.8, avaliacao: 4.8, avaliacoes: 5310,
@@ -113,6 +113,13 @@ function sabonetes() {
     }),
     item('Magalu', 'Kit 6 Sabonete Líquido Marca X Erva-doce 250ml', 54.9, {
       foto: img.kit3('erva'), freteGratis: true, frete: 0, embalagens: 6, conteudo: 250, unidade: 'ml', avaliacao: 4.9, avaliacoes: 420,
+    }),
+    // Fora do assunto: o Google às vezes mistura produtos parecidos, e mais baratos
+    item('Drogasil', 'Hidratante Corporal Marca X Algodão 400ml', 9.9, {
+      foto: img.frascoPequeno('algodao'), freteGratis: true, frete: 0, embalagens: 1, conteudo: 400, unidade: 'ml', avaliacao: 4.6, avaliacoes: 3100,
+    }),
+    item('Carrefour', 'Sabonete em Barra Marca Z Erva-doce 90g', 2.49, {
+      foto: img.frascoPequeno('erva'), frete: 6.9, embalagens: 1, conteudo: 90, unidade: 'g', avaliacao: 4.3, avaliacoes: 88,
     }),
   ];
 }
