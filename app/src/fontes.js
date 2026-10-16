@@ -31,7 +31,7 @@ export async function buscarProdutos(q, { cep = '' } = {}) {
   }
   const c = String(cep).replace(/\D/g, '');
   const j = await pedir(`/api/buscar?${new URLSearchParams(c.length === 8 ? { q, cep: c } : { q })}`);
-  return { itens: j.itens || [], verificadoEm: j.verificadoEm, fontes: j.fontes || [], local: j.local || null, demo: false, aviso: '' };
+  return { itens: j.itens || [], filtros: j.filtros || [], verificadoEm: j.verificadoEm, fontes: j.fontes || [], local: j.local || null, demo: false, aviso: '' };
 }
 
 /** Todas as lojas que vendem um produto, com link direto. Gasta 1 busca da cota (guardada por horas). */

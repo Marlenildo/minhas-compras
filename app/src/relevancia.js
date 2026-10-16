@@ -60,15 +60,24 @@ export function combina(titulo, busca) {
   return achadas / t.length;
 }
 
+// Palavras que costumam faltar no título sem mudar o produto: "fone (de ouvido)"
+const OPCIONAIS = { ouvido: ['fone'] };
+
+function termosObrigatorios(busca) {
+  const t = termos(busca);
+  return t.filter((x) => !(OPCIONAIS[x] && OPCIONAIS[x].some((y) => t.includes(y))));
+}
+
 /**
  * A oferta é do assunto da busca?
  * Até 3 palavras na busca: todas precisam aparecer. Com mais: pode faltar 1 a cada 4.
  */
 export function eRelevante(titulo, busca) {
-  const n = termos(busca).length;
+  const obrigatorios = termosObrigatorios(busca);
+  const n = obrigatorios.length;
   if (!n) return true;
   const minimo = n <= 3 ? 1 : (n - Math.floor(n / 4)) / n;
-  return combina(titulo, busca) >= minimo - 1e-9;
+  return combina(titulo, obrigatorios.join(' ')) >= minimo - 1e-9;
 }
 
 /** Parecença entre dois títulos (0 a 1): palavras em comum sobre o total do menor. */

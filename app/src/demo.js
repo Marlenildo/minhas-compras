@@ -162,6 +162,10 @@ export function buscaDemo(q) {
   const conhecida = fone || /sabonete|sab[aã]o|refil/i.test(q);
   return {
     itens: fone ? fones() : sabonetes(),
+    // Como os filtros que o Google devolve junto com a busca
+    filtros: fone
+      ? [{ nome: 'Marca', opcoes: ['Marca Y', 'Marca Z', 'Marca W', 'Marca V'] }, { nome: 'Tipo', opcoes: ['Over-ear', 'On-ear', 'Intra-auricular'] }]
+      : [{ nome: 'Fragrância', opcoes: ['Lavanda', 'Mel', 'Algodão', 'Erva-doce'] }],
     aviso: conhecida
       ? 'Demonstração: produtos e preços fictícios.'
       : 'Demonstração: esta versão só tem dois exemplos (sabonete líquido e fone bluetooth), com preços fictícios. Mostrando o sabonete.',

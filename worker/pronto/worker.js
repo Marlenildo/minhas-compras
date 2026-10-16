@@ -299,6 +299,15 @@ async function diagnosticarML(env, fetcher = fetch) {
   return passos;
 }
 
+// app/src/facetas.js
+var GRUPO_IGNORADO = /pre[cç]o|price|loja|store|seller|vendedor|merchant|frete|shipping|entrega|delivery|promo|sale|deal|oferta|avalia|rating|review|condi|used|usado|refine|refinar|nearby|perto|hoje|today|small business/i;
+function limparFiltrosGoogle(filtros) {
+  return (Array.isArray(filtros) ? filtros : []).filter((f) => f && f.type && !GRUPO_IGNORADO.test(f.type)).map((f) => ({
+    nome: String(f.type).trim(),
+    opcoes: [...new Set((f.options || []).map((o) => String(o?.text || "").trim()).filter((t) => t && t.length <= 40 && !GRUPO_IGNORADO.test(t)))].slice(0, 30)
+  })).filter((f) => f.opcoes.length >= 2).slice(0, 6);
+}
+
 // worker/src/google.js
 var SERPAPI = "https://serpapi.com/search.json";
 function lerFrete(texto) {
@@ -364,18 +373,19 @@ async function buscarGoogle(q, { env, fetcher = fetch, location = "Brazil" } = {
     if (/run out of searches|plan|limit/i.test(motivo)) {
       throw new ErroDeFonte("As buscas gratuitas do m\xEAs acabaram. Elas voltam no pr\xF3ximo ciclo da SerpApi.", 429);
     }
-    if (/hasn't returned any results/i.test(motivo)) return [];
+    if (/hasn't returned any results/i.test(motivo)) return { itens: [], filtros: [] };
     throw new ErroDeFonte(`A busca no Google Shopping falhou (${motivo}).`, 502);
   }
   const resultados = [...j.shopping_results || [], ...j.inline_shopping_results || []];
   const vistos = /* @__PURE__ */ new Set();
-  return resultados.map(normalizarResultadoGoogle).filter((i) => {
+  const itens = resultados.map(normalizarResultadoGoogle).filter((i) => {
     if (i.condicao === "used" || !(i.preco > 0)) return false;
     const chave = `${i.loja}|${i.titulo}|${i.preco}`;
     if (vistos.has(chave)) return false;
     vistos.add(chave);
     return true;
   });
+  return { itens, filtros: limparFiltrosGoogle(j.filters) };
 }
 async function diagnosticarGoogle(env, fetcher = fetch) {
   if (!env.SERPAPI_KEY) return [{ etapa: "Google Shopping (SerpApi)", ok: false, mensagem: "Falta o segredo SERPAPI_KEY." }];
@@ -651,8 +661,8 @@ async function tratar(req, env, ctx = {}, fetcher = fetch) {
       if (salvo) return json({ ...salvo, doCache: true }, 200, { ...cabecalhos2, "cache-control": "public, max-age=300" });
     }
     try {
-      const itens = fonte === "google" ? await buscarGoogle(q, { env, fetcher, location }) : await buscarML(q, { env, cep, fetcher });
-      const corpo = { q, cep: cep || null, local, verificadoEm: (/* @__PURE__ */ new Date()).toISOString(), fontes: [fonte], itens };
+      const { itens, filtros } = fonte === "google" ? await buscarGoogle(q, { env, fetcher, location }) : { itens: await buscarML(q, { env, cep, fetcher }), filtros: [] };
+      const corpo = { q, cep: cep || null, local, verificadoEm: (/* @__PURE__ */ new Date()).toISOString(), fontes: [fonte], itens, filtros };
       if (env.TOKENS) {
         const gravar = env.TOKENS.put(chaveCache, JSON.stringify(corpo), { expirationTtl: Math.max(60, Math.round(horas * 3600)) });
         if (ctx.waitUntil) ctx.waitUntil(gravar);

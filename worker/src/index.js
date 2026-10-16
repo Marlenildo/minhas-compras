@@ -122,8 +122,9 @@ export async function tratar(req, env, ctx = {}, fetcher = fetch) {
     }
 
     try {
-      const itens = fonte === 'google' ? await buscarGoogle(q, { env, fetcher, location }) : await buscarML(q, { env, cep, fetcher });
-      const corpo = { q, cep: cep || null, local, verificadoEm: new Date().toISOString(), fontes: [fonte], itens };
+      const { itens, filtros } =
+        fonte === 'google' ? await buscarGoogle(q, { env, fetcher, location }) : { itens: await buscarML(q, { env, cep, fetcher }), filtros: [] };
+      const corpo = { q, cep: cep || null, local, verificadoEm: new Date().toISOString(), fontes: [fonte], itens, filtros };
       if (env.TOKENS) {
         const gravar = env.TOKENS.put(chaveCache, JSON.stringify(corpo), { expirationTtl: Math.max(60, Math.round(horas * 3600)) });
         if (ctx.waitUntil) ctx.waitUntil(gravar);

@@ -59,6 +59,10 @@ const resultados = {
     { position: 3, title: 'Sabonete Líquido Marca X usado', source: 'OLX', extracted_price: 5, second_hand_condition: 'usado' },
     { position: 4, title: 'Sabonete Líquido Marca X 650 ml', source: 'Amazon.com.br', extracted_price: 19.9, delivery: 'Frete grátis' },
   ],
+  filters: [
+    { type: 'Preço', options: [{ text: 'Até R$ 20' }, { text: 'Mais de R$ 20' }] },
+    { type: 'Marca', options: [{ text: 'Marca X' }, { text: 'Marca Y' }] },
+  ],
 };
 
 test('com a chave da SerpApi, a busca usa o Google e guarda no cache', async () => {
@@ -71,6 +75,7 @@ test('com a chave da SerpApi, a busca usa o Google e guarda no cache', async () 
   assert.deepEqual(j.fontes, ['google']);
   assert.deepEqual(j.itens.map((i) => i.loja), ['Magalu', 'Amazon.com.br']); // sem repetido e sem usado
   assert.equal(j.itens[0].frete, 10);
+  assert.deepEqual(j.filtros, [{ nome: 'Marca', opcoes: ['Marca X', 'Marca Y'] }]);
   const pedido = new URL(f.chamadas[0]);
   assert.equal(pedido.searchParams.get('engine'), 'google_shopping');
   assert.equal(pedido.searchParams.get('gl'), 'br');

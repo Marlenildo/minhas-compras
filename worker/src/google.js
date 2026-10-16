@@ -2,6 +2,7 @@
 // Uma busca traz ofertas de várias lojas (Amazon, Mercado Livre, Magalu, farmácias...).
 import { lerTitulo, lerNumero } from '../../app/src/core.js';
 import { ErroDeFonte } from './mercadolivre.js';
+import { limparFiltrosGoogle } from '../../app/src/facetas.js';
 
 const SERPAPI = 'https://serpapi.com/search.json';
 
@@ -55,7 +56,7 @@ export function normalizarResultadoGoogle(r, i = 0) {
   };
 }
 
-/** Busca no Google Shopping do Brasil. */
+/** Busca no Google Shopping do Brasil. Devolve { itens, filtros } (filtros do Google: marca, cor, tipo...). */
 export async function buscarGoogle(q, { env, fetcher = fetch, location = 'Brazil' } = {}) {
   if (!env.SERPAPI_KEY) throw new ErroDeFonte('O servidor ainda não tem a chave da SerpApi (SERPAPI_KEY).', 503);
   const url = `${SERPAPI}?${new URLSearchParams({
@@ -74,12 +75,12 @@ export async function buscarGoogle(q, { env, fetcher = fetch, location = 'Brazil
     if (/run out of searches|plan|limit/i.test(motivo)) {
       throw new ErroDeFonte('As buscas gratuitas do mês acabaram. Elas voltam no próximo ciclo da SerpApi.', 429);
     }
-    if (/hasn't returned any results/i.test(motivo)) return [];
+    if (/hasn't returned any results/i.test(motivo)) return { itens: [], filtros: [] };
     throw new ErroDeFonte(`A busca no Google Shopping falhou (${motivo}).`, 502);
   }
   const resultados = [...(j.shopping_results || []), ...(j.inline_shopping_results || [])];
   const vistos = new Set();
-  return resultados
+  const itens = resultados
     .map(normalizarResultadoGoogle)
     .filter((i) => {
       if (i.condicao === 'used' || !(i.preco > 0)) return false;
@@ -88,6 +89,7 @@ export async function buscarGoogle(q, { env, fetcher = fetch, location = 'Brazil
       vistos.add(chave);
       return true;
     });
+  return { itens, filtros: limparFiltrosGoogle(j.filters) };
 }
 
 /** Confere a chave sem gastar busca: a conta da SerpApi diz quantas buscas restam. */

@@ -9,7 +9,7 @@ const raiz = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ler = (p) => readFileSync(join(raiz, p), 'utf8');
 
 // Ordem: cada módulo só depende dos anteriores
-const MODULOS = ['core.js', 'config.js', 'demo.js', 'fontes.js', 'relevancia.js', 'app.js'];
+const MODULOS = ['core.js', 'config.js', 'demo.js', 'fontes.js', 'relevancia.js', 'facetas.js', 'app.js'];
 
 function empacotar(nome, { demo = false } = {}) {
   let fonte = ler(`app/src/${nome}`);

@@ -2,6 +2,7 @@ import { UNIDADES, lerNumero, lerTitulo, grupoDaOferta, quantidadeDoAnuncio, pre
 import { buscarProdutos, buscarLojas, modoDemo } from './fontes.js';
 import { fotoReserva } from './demo.js';
 import { eRelevante, parecenca, buscaParecida, LIMIAR_PARECIDO } from './relevancia.js';
+import { montarFacetas, passaNasFacetas } from './facetas.js';
 
 // ---------------------------------------------------------------------------
 // Estado
@@ -26,10 +27,11 @@ function salvar() {
   }
 }
 
-const busca = { q: '', itens: [], verificadoEm: null, fontes: [], local: null, demo: false, aviso: '', carregando: false, erro: '' };
+const busca = { q: '', itens: [], filtros: [], verificadoEm: null, fontes: [], local: null, demo: false, aviso: '', carregando: false, erro: '' };
 const FILTROS_VAZIOS = () => ({
   lojas: new Set(), precoMin: '', precoMax: '', freteGratis: false, promocao: false, avaliacao4: false, comTamanho: false,
   relevantes: true, // só o que combina com a busca
+  facetas: {}, // grupo → Set(valores): marca, tamanho, cor...
   parecidosCom: null, // { id, titulo }
 });
 const chaveBusca = (q) => String(q).trim().toLowerCase().replace(/\s+/g, ' ');
@@ -38,6 +40,7 @@ const comparar = new Set();
 const MAX_COMPARAR = 4;
 let detalhe = null; // { item, carregando, erro, dados, editandoTamanho }
 let editandoFreteId = null; // cartão com o campo de frete aberto
+const gruposAbertos = new Set(); // grupos de filtro com todas as opções à mostra
 
 // ---------------------------------------------------------------------------
 // Formatação
@@ -151,18 +154,34 @@ function calcular() {
   const [grupo, nGrupo] = Object.entries(contagem).sort((a, b) => b[1] - a[1])[0] || [null, 0];
   const usaUnidade = nGrupo >= 2;
 
+  // Filtros que dependem da busca (marca, tamanho, cor...), montados sobre o que combina com ela
+  const facetas = montarFacetas(
+    base.map((i) => ({ ...i, rotuloTamanho: i.qtd ? fmtQtd(i.qtd, i.grupo) : null })),
+    { busca: busca.q, filtrosGoogle: busca.filtros || [] }
+  );
+
   const min = lerNumero(filtros.precoMin, 0);
   const max = lerNumero(filtros.precoMax, 0);
-  const lista = base.filter(
-    (i) =>
+  const passaBasicos = (i) =>
       (!filtros.lojas.size || filtros.lojas.has(i.loja)) &&
       (!min || i.preco >= min) &&
       (!max || i.preco <= max) &&
       (!filtros.freteGratis || i.frete === 0) &&
       (!filtros.promocao || i.desconto > 0) &&
       (!filtros.avaliacao4 || i.avaliacao >= 4) &&
-      (!filtros.comTamanho || (usaUnidade && i.grupo === grupo))
-  );
+      (!filtros.comTamanho || (usaUnidade && i.grupo === grupo));
+  const lista = base.filter((i) => passaBasicos(i) && passaNasFacetas(facetas.valores.get(i.id), filtros.facetas));
+
+  // Quantas ofertas cada opção traria, mantendo os filtros dos outros grupos
+  for (const g of facetas.grupos) {
+    const semEste = { ...filtros.facetas, [g.id]: null };
+    const n = new Map();
+    for (const i of base) {
+      if (!passaBasicos(i) || !passaNasFacetas(facetas.valores.get(i.id), semEste)) continue;
+      for (const v of facetas.valores.get(i.id)[g.id] || []) n.set(v, (n.get(v) || 0) + 1);
+    }
+    for (const o of g.opcoes) o.n = n.get(o.valor) || 0;
+  }
 
   const ordem = prefs.ordem === 'unidade' && !usaUnidade ? 'relevancia' : prefs.ordem;
   const porUnidade = (i) => (i.grupo === grupo && i.unit != null ? i.unit : Infinity);
@@ -203,7 +222,7 @@ function calcular() {
     lojas.set(i.loja, l);
   }
 
-  return { alvoId: alvo?.id || null, todos, base, foraDoAssunto, lista, grupo, usaUnidade, ordem, destaques, lojas: [...lojas.values()].sort((a, b) => b.n - a.n || a.min - b.min) };
+  return { facetas: facetas.grupos, alvoId: alvo?.id || null, todos, base, foraDoAssunto, lista, grupo, usaUnidade, ordem, destaques, lojas: [...lojas.values()].sort((a, b) => b.n - a.n || a.min - b.min) };
 }
 
 // ---------------------------------------------------------------------------
@@ -312,6 +331,7 @@ function htmlFiltros(c) {
   return `
     <div class="f-cabeca"><h2>Filtros</h2><button type="button" class="link" data-acao="limpar-filtros">Limpar</button>
       <button type="button" class="fechar-sheet" data-acao="fechar-filtros" aria-label="Fechar filtros">×</button></div>
+    ${c.facetas.map((g) => htmlGrupoFaceta(g)).join('')}
     <div class="f-grupo">
       <h3>Lojas</h3>
       <div class="lista-lojas">${lojas}</div>
@@ -334,8 +354,45 @@ function htmlFiltros(c) {
     <div class="f-rodape"><button type="button" class="botao" data-acao="fechar-filtros">Ver ${c.lista.length} oferta${c.lista.length === 1 ? '' : 's'}</button></div>`;
 }
 
-function chipsAtivos() {
+const MOSTRAR_OPCOES = 8;
+
+function botaoFaceta(g, o) {
+  const marcado = Boolean(filtros.facetas[g.id]?.has(o.valor));
+  const vazio = !o.n && !marcado;
+  return `<button type="button" class="chip-filtro${vazio ? ' vazio' : ''}" data-acao="faceta" data-faceta="${esc(g.id)}" data-valor="${esc(o.valor)}" aria-pressed="${marcado}"${vazio ? ' aria-disabled="true" title="Nenhuma oferta com os outros filtros escolhidos"' : ''}>${esc(o.rotulo)}<span class="n">${o.n}</span></button>`;
+}
+
+function htmlGrupoFaceta(g) {
+  const aberto = gruposAbertos.has(g.id);
+  const marcadas = filtros.facetas[g.id] || new Set();
+  // As marcadas sempre aparecem, mesmo com o grupo recolhido
+  const visiveis = aberto ? g.opcoes : g.opcoes.filter((o, k) => k < MOSTRAR_OPCOES || marcadas.has(o.valor));
+  const resto = g.opcoes.length - visiveis.length;
+  return `<div class="f-grupo">
+    <h3>${esc(g.nome)}</h3>
+    <div class="chips-filtro">${visiveis.map((o) => botaoFaceta(g, o)).join('')}</div>
+    ${resto > 0 || aberto && g.opcoes.length > MOSTRAR_OPCOES ? `<button type="button" class="link mini" data-acao="abrir-grupo" data-faceta="${esc(g.id)}">${aberto ? 'Mostrar menos' : `Ver mais ${resto}`}</button>` : ''}
+  </div>`;
+}
+
+/** Faixa rápida acima dos resultados: o grupo mais útil (o do Google, ou tamanho, ou características). */
+function htmlFaixaRapida(c) {
+  const g = c.facetas.find((x) => x.id === 'g0') || c.facetas.find((x) => x.id === 'tamanho') || c.facetas.find((x) => x.id === 'carac') || c.facetas[0];
+  if (!g) return '';
+  return `<div class="faixa-rapida" role="group" aria-label="${esc(g.nome)}"><span class="fr-nome">${esc(g.nome)}</span>${g.opcoes
+    .slice(0, 12)
+    .map((o) => botaoFaceta(g, o))
+    .join('')}</div>`;
+}
+
+function chipsAtivos(cc) {
   const c = [];
+  for (const g of cc?.facetas || []) {
+    for (const v of filtros.facetas[g.id] || []) {
+      const o = g.opcoes.find((x) => x.valor === v);
+      c.push([`faceta`, `${g.nome}: ${o ? o.rotulo : v}`, g.id, v]);
+    }
+  }
   for (const l of filtros.lojas) c.push([`loja:${l}`, l]);
   if (filtros.precoMin) c.push(['precoMin', `De ${brl(lerNumero(filtros.precoMin))}`]);
   if (filtros.precoMax) c.push(['precoMax', `Até ${brl(lerNumero(filtros.precoMax))}`]);
@@ -363,6 +420,7 @@ function desenhar() {
     $('#status').textContent = `Buscando ofertas de “${busca.q}”…`;
     $('#aviso-demo').hidden = true;
     $('#destaques').innerHTML = '';
+    $('#faixa-rapida').innerHTML = '';
     $('#chips').innerHTML = '';
     $('#grade').innerHTML = '<div class="cartao esq"></div>'.repeat(8);
     $('#filtros-conteudo').innerHTML = '';
@@ -370,6 +428,7 @@ function desenhar() {
   }
   if (busca.erro) {
     $('#status').textContent = '';
+    $('#faixa-rapida').innerHTML = '';
     $('#destaques').innerHTML = '';
     $('#chips').innerHTML = '';
     $('#filtros-conteudo').innerHTML = '';
@@ -397,14 +456,20 @@ function desenhar() {
 
   desenharOrdem(c);
 
-  const ativos = chipsAtivos();
+  const ativos = chipsAtivos(c);
   $('#chips').innerHTML = ativos.length
-    ? ativos.map(([k, t]) => `<button type="button" class="chip-ativo" data-remover-filtro="${esc(k)}">${esc(t)}<span aria-hidden="true">×</span></button>`).join('') +
+    ? ativos
+        .map(
+          ([k, t, g, v]) =>
+            `<button type="button" class="chip-ativo" data-remover-filtro="${esc(k)}"${g ? ` data-faceta="${esc(g)}" data-valor="${esc(v)}"` : ''}>${esc(t)}<span aria-hidden="true">×</span></button>`
+        )
+        .join('') +
       '<button type="button" class="link" data-acao="limpar-filtros">Limpar tudo</button>'
     : '';
   const nFiltros = ativos.length;
   $('#botao-filtros').innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M4.5 8h7M7 12h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Filtros${nFiltros ? `<span class="contador">${nFiltros}</span>` : ''}`;
 
+  $('#faixa-rapida').innerHTML = htmlFaixaRapida(c);
   $('#destaques').innerHTML = htmlDestaques(c);
   $('#grade').innerHTML = c.lista.length
     ? c.lista.map((i) => htmlCartao(i, c)).join('')
@@ -642,6 +707,7 @@ async function executarBusca(q) {
   filtros = FILTROS_VAZIOS();
   comparar.clear();
   editandoFreteId = null;
+  gruposAbertos.clear();
   prefs.ultimaBusca = q;
   salvar();
   desenhar();
@@ -660,12 +726,25 @@ function aoClicar(ev) {
   const id = alvo.dataset.id || cartao?.dataset.id;
   if (alvo.dataset.removerFiltro) {
     const k = alvo.dataset.removerFiltro;
-    if (k.startsWith('loja:')) filtros.lojas.delete(k.slice(5));
+    if (k === 'faceta') filtros.facetas[alvo.dataset.faceta]?.delete(alvo.dataset.valor);
+    else if (k.startsWith('loja:')) filtros.lojas.delete(k.slice(5));
     else if (k === 'parecidosCom') filtros.parecidosCom = null;
     else filtros[k] = typeof filtros[k] === 'boolean' ? false : '';
     return desenhar();
   }
   switch (alvo.dataset.acao) {
+    case 'faceta': {
+      if (alvo.getAttribute('aria-disabled') === 'true') return;
+      const g = alvo.dataset.faceta;
+      const set = (filtros.facetas[g] ||= new Set());
+      if (set.has(alvo.dataset.valor)) set.delete(alvo.dataset.valor);
+      else set.add(alvo.dataset.valor);
+      return desenhar();
+    }
+    case 'abrir-grupo':
+      if (gruposAbertos.has(alvo.dataset.faceta)) gruposAbertos.delete(alvo.dataset.faceta);
+      else gruposAbertos.add(alvo.dataset.faceta);
+      return desenhar();
     case 'comparar':
       if (comparar.has(id)) comparar.delete(id);
       else if (comparar.size < MAX_COMPARAR) comparar.add(id);
@@ -868,9 +947,17 @@ function iniciar() {
     if (guardarCep() && busca.q && !busca.carregando) executarBusca(busca.q);
   });
 
-  $('#form-busca').addEventListener('submit', (ev) => {
+  const caixa = $('#form-busca');
+  caixa.addEventListener('focusin', () => caixa.classList.add('expandida'));
+  document.addEventListener('pointerdown', (ev) => {
+    if (!ev.target.closest('#form-busca')) caixa.classList.remove('expandida');
+  });
+
+  caixa.addEventListener('submit', (ev) => {
     ev.preventDefault();
     guardarCep();
+    caixa.classList.remove('expandida');
+    document.activeElement?.blur?.();
     executarBusca($('#q').value || busca.q);
   });
 

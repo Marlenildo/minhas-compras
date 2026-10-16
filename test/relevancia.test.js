@@ -37,3 +37,9 @@ test('busca de parecidos usa as primeiras palavras do título', () => {
   assert.equal(buscaParecida('Kit 3 Sabonete Líquido Marca X Algodão 250ml'), 'Sabonete Líquido Marca Algodão');
   assert.equal(buscaParecida('Fone de Ouvido JBL Tune 520BT Bluetooth Preto'), 'Fone Ouvido JBL Tune 520BT Bluetooth');
 });
+
+test('"de ouvido" é opcional quando a busca é de fone', () => {
+  assert.equal(eRelevante('Fone Bluetooth JBL Tune 520BT', 'fone de ouvido bluetooth'), true);
+  assert.equal(eRelevante('Caixa de Som Bluetooth JBL', 'fone de ouvido bluetooth'), false);
+  assert.equal(eRelevante('Protetor de ouvido', 'ouvido'), true);
+});
