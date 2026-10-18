@@ -9,7 +9,8 @@
 <meta name="theme-color" content="#f5f6fa">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="assets/logo-512.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
 <script>try{var t=localStorage.getItem("minhas-compras:tema");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -108,6 +109,9 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 .topo .envoltorio { display: flex; align-items: center; justify-content: space-between; gap: 12px; position: relative; }
 .marca { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font-family: var(--font-display); font-weight: 700; font-size: 1.05rem; letter-spacing: -0.02em; min-width: 0; flex: 0 1 auto; }
 .marca span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* celular: o nome quebra em duas linhas ao lado da logo, sem empurrar os botões */
+@media (max-width: 560px) { .marca span { white-space: normal; font-size: 0.9rem; line-height: 1.08; max-width: 6.4em; overflow: visible; } }
+@media (max-width: 330px) { .marca span { display: none; } }
 .marca:hover, .marca:focus-visible { text-decoration: none; color: var(--ink); }
 .topo .envoltorio > .marca { margin-right: auto; }
 .topo-acoes { flex: none; }
