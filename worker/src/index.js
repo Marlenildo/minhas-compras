@@ -40,6 +40,8 @@ export async function tratar(req, env, ctx = {}, fetcher = fetch) {
 
   if (req.method !== 'GET') return json({ erro: 'Use GET.' }, 405, cabecalhos);
 
+  // Fora de /api/*, o endereço é do app: com os arquivos publicados junto (ASSETS), entrega a página
+  if (env.ASSETS && !url.pathname.startsWith('/api/')) return env.ASSETS.fetch(req);
   if (url.pathname === '/' || url.pathname === '') {
     return json({ servico: 'Minhas Compras', rotas: ['/api/saude', '/api/buscar?q=produto', '/api/lojas?token=...', '/api/diagnostico', '/api/auth/google', '/api/conta'] }, 200, cabecalhos);
   }

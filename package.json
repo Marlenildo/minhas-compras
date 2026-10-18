@@ -7,7 +7,7 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "build": "node scripts/build.mjs",
-    "build:worker": "npx --yes esbuild@0.24.0 worker/src/index.js --bundle --format=esm --target=es2022 --legal-comments=none --outfile=worker/pronto/worker.js"
+    "build:worker": "node scripts/build.mjs && npx --yes esbuild@0.24.0 worker/src/pronto.js --bundle --format=esm --target=es2022 --legal-comments=none --loader:.html=text --loader:.svg=text --outfile=worker/pronto/worker.js"
   },
   "license": "MIT",
   "author": "Marlenildo"

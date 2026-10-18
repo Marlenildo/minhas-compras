@@ -36,7 +36,7 @@ test/                   testes do motor e do servidor
 ```bash
 npm test                # testes
 npm run build           # dist/minhas-compras.html, versão de arquivo único
-npm run build:worker    # worker/pronto/worker.js, para colar no painel do Cloudflare
+npm run build:worker    # worker/pronto/worker.js (servidor + app num arquivo só), para colar no painel do Cloudflare
 ```
 
 ## Fontes de preço
@@ -55,12 +55,14 @@ O servidor (`worker/`) guarda as chaves de acesso; a página nunca chama as loja
 
 O app (`app/`) e o servidor (`worker/`) ficam no mesmo Worker, `minhas-compras-api` (veja `wrangler.toml`): o endereço principal abre o app e `/api/*` vai para o servidor. Com o repositório conectado ao Cloudflare, cada envio ao GitHub publica tudo sozinho.
 
-1. No `wrangler.toml`, troque `COLE_AQUI_O_ID_DO_KV` pelo ID do namespace KV `minhas-compras-tokens`.
+1. O `wrangler.toml` já aponta para o KV `minhas-compras-tokens` e o banco D1 `minhas-compras`.
 2. No Cloudflare: *Workers & Pages → minhas-compras-api → Settings → Build → Connect*, repositório `minhas-compras`, ramo `main`. Comando de build vazio; comando de deploy `npx wrangler deploy`.
 3. Segredos no painel (*Settings → Variables and secrets*): `SERPAPI_KEY` e, para o Mercado Livre, `ML_CLIENT_ID`, `ML_CLIENT_SECRET` e `ADMIN_CHAVE`.
 4. Endereço próprio: *minhas-compras-api → Settings → Domains & Routes → Add → Custom domain* → `minhas-compras.marlenildo.online` (o domínio precisa estar com o DNS na Cloudflare). O app abre direto na raiz do endereço, sem `/app`.
 
-Sem a conexão com o GitHub, dá para publicar à mão com `npx wrangler deploy` na raiz do projeto.
+Sem a conexão com o GitHub, dá para publicar à mão com `npx wrangler deploy` na raiz do projeto, ou colar `worker/pronto/worker.js` no editor do painel: esse arquivo já leva o app junto, então o endereço principal abre a página mesmo sem a pasta `app/` publicada.
+
+Visual: o mesmo do Minhas Entregas e do Meus Investimentos (paleta de marlenildo.online: gradiente violeta → ciano, Sora e Inter, tema claro/escuro com botão no topo).
 
 ## Favoritos, listas e conta
 

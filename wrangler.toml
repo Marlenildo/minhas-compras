@@ -7,9 +7,11 @@ compatibility_date = "2026-09-01"
 # Mantém as variáveis e segredos cadastrados no painel (SERPAPI_KEY, ML_CLIENT_ID...)
 keep_vars = true
 
-# Arquivos do app: o endereço principal abre app/index.html; /api/* vai para o servidor
+# Arquivos do app: o endereço principal abre app/index.html; /api/* vai sempre para o servidor
 [assets]
 directory = "./app"
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
 
 [vars]
 ORIGENS_PERMITIDAS = "*"
@@ -17,15 +19,16 @@ CACHE_HORAS = "6"
 # Endereços do app para onde o login com Google pode voltar (separados por vírgula)
 ORIGENS_APP = "https://minhas-compras.marlenildo.online"
 
-# Armazenamento do cache e dos tokens. Troque pelo ID do namespace "minhas-compras-tokens"
-# (Cloudflare → Storage & Databases → Workers KV → copie o ID).
+# Armazenamento do cache e dos tokens: namespace KV "minhas-compras-tokens".
 [[kv_namespaces]]
 binding = "TOKENS"
-id = "COLE_AQUI_O_ID_DO_KV"
+id = "27d3555857e84b7397e86c93049e5b4c"
 
-# Banco das contas (usuários, sessões, salvos). Troque pelo ID do banco D1 "minhas-compras"
-# (Cloudflare → Storage & Databases → D1 → copie o Database ID). As tabelas são criadas sozinhas.
+# Banco das contas (usuários, sessões, salvos): D1 "minhas-compras". As tabelas são criadas sozinhas.
 [[d1_databases]]
 binding = "DB"
 database_name = "minhas-compras"
-database_id = "COLE_AQUI_O_ID_DO_D1"
+database_id = "67594694-6b16-452e-9649-da28856ed703"
+
+[observability]
+enabled = true
