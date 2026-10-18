@@ -106,7 +106,11 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 .icone-btn:hover { color: var(--ink); border-color: var(--line-forte); }
 .icone-btn svg { width: 18px; height: 18px; }
 .topo .envoltorio { display: flex; align-items: center; justify-content: space-between; gap: 12px; position: relative; }
-.marca { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 700; font-size: 1.05rem; letter-spacing: -0.02em; min-width: 0; }
+.marca { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font-family: var(--font-display); font-weight: 700; font-size: 1.05rem; letter-spacing: -0.02em; min-width: 0; flex: 0 1 auto; }
+.marca span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.marca:hover, .marca:focus-visible { text-decoration: none; color: var(--ink); }
+.topo .envoltorio > .marca { margin-right: auto; }
+.topo-acoes { flex: none; }
 .marca svg { display: block; flex: none; }
 .botao-conta { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 6px 12px 6px 7px; font-size: 13.5px; font-weight: 600; }
 .botao-conta .bolinha { width: 24px; height: 24px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; }
@@ -471,7 +475,7 @@ dialog::backdrop { background: rgb(10 11 16 / 0.6); backdrop-filter: blur(2px); 
 .botao-salvos { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 6px 12px; font-size: 13.5px; font-weight: 700; color: var(--ink); }
 .botao-salvos svg { color: #e11d48; }
 .botao-salvos .contador { margin-left: 0; }
-@media (max-width: 420px) { .rotulo-salvos, .rotulo-conta { display: none; } .botao-conta { padding: 6px; } .marca span { display: none; } }
+@media (max-width: 420px) { .rotulo-salvos, .rotulo-conta { display: none; } .botao-conta { padding: 6px; } .marca { font-size: 0.98rem; gap: 8px; } .topo-acoes { gap: 6px; } }
 
 /* Coração e variação de preço */
 .coracao { margin-left: auto; flex: none; width: 34px; height: 34px; margin-block: -6px; margin-right: -6px; border: 0; background: none; color: var(--muted); display: grid; place-items: center; border-radius: 50%; }
@@ -544,7 +548,7 @@ dialog .form-lista { padding: 6px 18px; }
 <body>
 <header class="topo">
   <div class="envoltorio">
-    <a class="marca" href="./" aria-label="Minhas Compras — início"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="34" height="34" aria-hidden="true"> <defs> <linearGradient id="mc-g" x1="110" y1="400" x2="420" y2="110" gradientUnits="userSpaceOnUse"> <stop offset="0" stop-color="#7c5cff"/> <stop offset="1" stop-color="#22d3ee"/> </linearGradient> <radialGradient id="mc-brilho" cx="0.2" cy="0.1" r="0.9"> <stop offset="0" stop-color="#2a2160"/> <stop offset="1" stop-color="#0a0b10"/> </radialGradient> </defs> <rect width="34" height="34" aria-hidden="true" rx="116" fill="url(#mc-brilho)"/> <g transform="translate(256 262) rotate(-45)"> <path d="M-150 -92 a26 26 0 0 1 26 -26 h190 a26 26 0 0 1 18 7.5 l78 78 a26 26 0 0 1 0 37 l-78 78 a26 26 0 0 1 -18 7.5 h-190 a26 26 0 0 1 -26 -26 z" fill="url(#mc-g)"/> <circle cx="96" cy="0" r="17" fill="#0a0b10"/> </g> <path d="M170 276L212 318L290 240" fill="none" stroke="#0a0b10" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/> </svg><span>Minhas Compras</span></a>
+    <a class="marca" href="./" aria-label="Minhas Compras — início"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="34" height="34" aria-hidden="true"> <defs> <linearGradient id="mc-g" x1="110" y1="400" x2="420" y2="110" gradientUnits="userSpaceOnUse"> <stop offset="0" stop-color="#7c5cff"/> <stop offset="1" stop-color="#22d3ee"/> </linearGradient> <radialGradient id="mc-brilho" cx="0.2" cy="0.1" r="0.9"> <stop offset="0" stop-color="#2a2160"/> <stop offset="1" stop-color="#0a0b10"/> </radialGradient> </defs> <rect width="512" height="512" rx="116" fill="url(#mc-brilho)"/> <g transform="translate(256 262) rotate(-45)"> <path d="M-150 -92 a26 26 0 0 1 26 -26 h190 a26 26 0 0 1 18 7.5 l78 78 a26 26 0 0 1 0 37 l-78 78 a26 26 0 0 1 -18 7.5 h-190 a26 26 0 0 1 -26 -26 z" fill="url(#mc-g)"/> <circle cx="96" cy="0" r="17" fill="#0a0b10"/> </g> <path d="M170 276L212 318L290 240" fill="none" stroke="#0a0b10" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/> </svg><span>Minhas Compras</span></a>
     <div class="topo-acoes">
     <button type="button" id="tema" class="icone-btn" aria-label="Mudar tema"></button>
     <button type="button" class="botao-salvos" id="botao-salvos" data-acao="abrir-salvos">
