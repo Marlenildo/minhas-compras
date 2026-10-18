@@ -1,7 +1,7 @@
 # App (pasta app/) e servidor de busca (worker/) no mesmo Worker do Cloudflare.
-# Com o repositório conectado ao Cloudflare (Workers → minhas-compras-api → Settings → Build),
+# Com o repositório conectado ao Cloudflare (Workers → minhas-compras → Settings → Build),
 # cada envio ao GitHub publica tudo sozinho.
-name = "minhas-compras-api"
+name = "minhas-compras"
 main = "worker/src/index.js"
 compatibility_date = "2026-09-01"
 # Mantém as variáveis e segredos cadastrados no painel (SERPAPI_KEY, ML_CLIENT_ID...)
@@ -17,7 +17,7 @@ run_worker_first = ["/api/*"]
 ORIGENS_PERMITIDAS = "*"
 CACHE_HORAS = "6"
 # Endereços do app para onde o login com Google pode voltar (separados por vírgula)
-ORIGENS_APP = "https://minhas-compras.marlenildo.online"
+ORIGENS_APP = "https://minhas-compras.marlenildo.online,https://minhas-compras.marlenildo.workers.dev"
 
 # Armazenamento do cache e dos tokens: namespace KV "minhas-compras-tokens".
 [[kv_namespaces]]
