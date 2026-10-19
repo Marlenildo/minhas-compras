@@ -53,12 +53,12 @@ O servidor (`worker/`) guarda as chaves de acesso; a página nunca chama as loja
 
 ## Hospedagem: tudo no Cloudflare
 
-O app (`app/`) e o servidor (`worker/`) ficam no mesmo Worker, `minhas-compras-api` (veja `wrangler.toml`): o endereço principal abre o app e `/api/*` vai para o servidor. Com o repositório conectado ao Cloudflare, cada envio ao GitHub publica tudo sozinho.
+O app (`app/`) e o servidor (`worker/`) ficam num Worker só, **`minhas-compras`** (veja `wrangler.toml`), no endereço **https://compras.marlenildo.online**: a raiz abre o app e `/api/*` vai para o servidor. A página chama o próprio endereço, então funciona igual em `compras.marlenildo.online` e em `minhas-compras.marlenildo.workers.dev`. Com o repositório conectado ao Cloudflare, cada envio ao GitHub publica tudo sozinho.
 
 1. O `wrangler.toml` já aponta para o KV `minhas-compras-tokens` e o banco D1 `minhas-compras`.
-2. No Cloudflare: *Workers & Pages → minhas-compras-api → Settings → Build → Connect*, repositório `minhas-compras`, ramo `main`. Comando de build vazio; comando de deploy `npx wrangler deploy`.
-3. Segredos no painel (*Settings → Variables and secrets*): `SERPAPI_KEY` e, para o Mercado Livre, `ML_CLIENT_ID`, `ML_CLIENT_SECRET` e `ADMIN_CHAVE`.
-4. Endereço próprio: *minhas-compras-api → Settings → Domains & Routes → Add → Custom domain* → `minhas-compras.marlenildo.online` (o domínio precisa estar com o DNS na Cloudflare). O app abre direto na raiz do endereço, sem `/app`.
+2. No Cloudflare: *Workers & Pages → minhas-compras → Settings → Build → Connect*, repositório `minhas-compras`, ramo `main`. Comando de build vazio; comando de deploy `npx wrangler deploy`.
+3. Segredos no painel (*minhas-compras → Settings → Variables and secrets*, tipo **Secret**): `SERPAPI_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` e, para o Mercado Livre, `ML_CLIENT_ID`, `ML_CLIENT_SECRET` e `ADMIN_CHAVE`.
+4. Endereço próprio: *minhas-compras → Settings → Domains & Routes → Add → Custom domain* → `compras.marlenildo.online`.
 
 Sem a conexão com o GitHub, dá para publicar à mão com `npx wrangler deploy` na raiz do projeto, ou colar `worker/pronto/worker.js` no editor do painel: esse arquivo já leva o app junto, então o endereço principal abre a página mesmo sem a pasta `app/` publicada.
 
@@ -74,7 +74,7 @@ Visual: o mesmo do Minhas Entregas e do Meus Investimentos (paleta de marlenildo
 - **Sair** (`POST /api/auth/sair`) encerra a sessão do aparelho. **Apagar minha conta** (`DELETE /api/conta`) apaga usuário, sessões e dados.
 - Política de privacidade: `app/privacidade.html`.
 
-Configuração no Cloudflare: banco D1 ligado como `DB`, KV como `TOKENS`, segredos `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET`. No Google Cloud, o URI de redirecionamento é `https://minhas-compras-api.marlenildo.workers.dev/api/auth/google/retorno`.
+Configuração no Cloudflare: banco D1 ligado como `DB`, KV como `TOKENS`, segredos `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET`. No Google Cloud, os URIs de redirecionamento autorizados são `https://compras.marlenildo.online/api/auth/google/retorno` e `https://minhas-compras.marlenildo.workers.dev/api/auth/google/retorno`.
 
 ## Próximos passos
 

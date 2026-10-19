@@ -33,9 +33,9 @@ const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
 const jwt = (dados) => `${b64({ alg: 'RS256' })}.${b64(dados)}.assinatura`;
 
 function ambiente() {
-  return { GOOGLE_CLIENT_ID: 'cliente.apps.googleusercontent.com', GOOGLE_CLIENT_SECRET: 'SEGREDO-GOOGLE', DB: new D1Falso(), TOKENS: new KVFalso(), ORIGENS_APP: 'https://minhas-compras.marlenildo.online' };
+  return { GOOGLE_CLIENT_ID: 'cliente.apps.googleusercontent.com', GOOGLE_CLIENT_SECRET: 'SEGREDO-GOOGLE', DB: new D1Falso(), TOKENS: new KVFalso(), ORIGENS_APP: 'https://compras.marlenildo.online' };
 }
-const APP = 'https://minhas-compras.marlenildo.online/';
+const APP = 'https://compras.marlenildo.online/';
 const API = 'https://api.exemplo';
 
 function googleFalso(perfil) {

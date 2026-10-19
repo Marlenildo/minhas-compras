@@ -609,7 +609,7 @@ var ErroConta = class extends Error {
   }
 };
 function origensDoApp(env, url) {
-  const lista = String(env.ORIGENS_APP || "https://minhas-compras.marlenildo.online").split(",").map((s) => s.trim()).filter(Boolean);
+  const lista = String(env.ORIGENS_APP || "https://compras.marlenildo.online").split(",").map((s) => s.trim()).filter(Boolean);
   return /* @__PURE__ */ new Set([...lista, url.origin]);
 }
 function voltaPermitida(volta, env, url) {
@@ -906,7 +906,8 @@ var minhas_compras_default = `<!doctype html>
 <meta name="theme-color" content="#f5f6fa">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="assets/logo-512.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
 <script>try{var t=localStorage.getItem("minhas-compras:tema");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}<\/script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1005,6 +1006,9 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 .topo .envoltorio { display: flex; align-items: center; justify-content: space-between; gap: 12px; position: relative; }
 .marca { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font-family: var(--font-display); font-weight: 700; font-size: 1.05rem; letter-spacing: -0.02em; min-width: 0; flex: 0 1 auto; }
 .marca span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* celular: o nome quebra em duas linhas ao lado da logo, sem empurrar os bot\xF5es */
+@media (max-width: 560px) { .marca span { white-space: normal; font-size: 0.9rem; line-height: 1.08; max-width: 6.4em; overflow: visible; } }
+@media (max-width: 330px) { .marca span { display: none; } }
 .marca:hover, .marca:focus-visible { text-decoration: none; color: var(--ink); }
 .topo .envoltorio > .marca { margin-right: auto; }
 .topo-acoes { flex: none; }
@@ -1819,9 +1823,16 @@ return { UNIDADES, EXIBICAO, lerNumero, quantidadeDoAnuncio, grupoDaOferta, desc
 
 M['config.js'] = (() => {
 // Endere\xE7o do servidor de busca (pasta worker/), sem barra no final.
+// O app e o servidor ficam no mesmo Worker (minhas-compras), ent\xE3o a p\xE1gina
+// chama o pr\xF3prio endere\xE7o: compras.marlenildo.online, ou o workers.dev.
+// Aberto como arquivo (dist/minhas-compras.html), usa o endere\xE7o principal.
 // Vazio = modo demonstra\xE7\xE3o, com produtos e pre\xE7os fict\xEDcios.
-// Exemplo depois de publicar o servidor: 'https://minhas-compras-api.SEU-USUARIO.workers.dev'
-const API_URL = 'https://minhas-compras-api.marlenildo.workers.dev';
+const ENDERECO_PRINCIPAL = 'https://compras.marlenildo.online';
+
+const API_URL =
+  typeof location !== 'undefined' && /^https?:$/.test(location.protocol) && !/^(localhost|127\\.0\\.0\\.1)$/.test(location.hostname)
+    ? location.origin
+    : ENDERECO_PRINCIPAL;
 
 return { API_URL };
 })();

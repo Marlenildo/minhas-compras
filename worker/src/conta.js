@@ -61,7 +61,7 @@ class ErroConta extends Error {
 
 /** Endereços do app para onde o login pode voltar (evita mandar a pessoa para um site estranho). */
 function origensDoApp(env, url) {
-  const lista = String(env.ORIGENS_APP || 'https://minhas-compras.marlenildo.online')
+  const lista = String(env.ORIGENS_APP || 'https://compras.marlenildo.online')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
